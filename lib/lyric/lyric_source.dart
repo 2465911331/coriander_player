@@ -1,5 +1,5 @@
-import 'dart:convert';
-import 'dart:io';
+import 'dart:async';
+import 'package:coriander_player/storage/safe_json.dart';
 
 import 'package:coriander_player/app_settings.dart';
 import 'package:coriander_player/utils.dart';
@@ -51,38 +51,45 @@ class LyricSource {
 }
 
 Map<String, LyricSource> LYRIC_SOURCES = {};
+bool lyricSourcesLoaded = false;
 
 Future<void> readLyricSources() async {
+  if (lyricSourcesLoaded) return;
   try {
     final supportPath = (await getAppDataDir()).path;
     final lyricSourcePath = "$supportPath\\lyric_source.json";
 
-    final lyricSourceStr = File(lyricSourcePath).readAsStringSync();
-    final Map lyricSourceJson = json.decode(lyricSourceStr);
-
+    final lyricSourceJson =
+        await readJsonSafely(lyricSourcePath, <String, Object>{}) as Map;
+    final parsed = <String, LyricSource>{};
     for (final item in lyricSourceJson.entries) {
-      if (File(item.key).existsSync() == false) continue;
-      LYRIC_SOURCES[item.key] = LyricSource.fromMap(item.value);
+      parsed[item.key as String] = LyricSource.fromMap(item.value as Map);
     }
+    LYRIC_SOURCES = parsed;
+    lyricSourcesLoaded = true;
   } catch (err, trace) {
     LOGGER.e(err, stackTrace: trace);
   }
 }
 
-Future<void> saveLyricSources() async {
-  try {
-    final supportPath = (await getAppDataDir()).path;
-    final lyricSourcePath = "$supportPath\\lyric_source.json";
+Timer? _lyricSaveTimer;
 
-    Map<String, Map> lyricSourceMaps = {};
-    for (final item in LYRIC_SOURCES.entries) {
-      lyricSourceMaps[item.key] = item.value.toMap();
+void scheduleLyricSourceSave() {
+  _lyricSaveTimer?.cancel();
+  _lyricSaveTimer = Timer(const Duration(milliseconds: 400), () async {
+    try {
+      await saveLyricSources();
+    } catch (error, stack) {
+      LOGGER.e(error, stackTrace: stack);
+      showTextOnSnackBar('歌词选择保存失败，请检查磁盘空间和权限');
     }
+  });
+}
 
-    final lyricSourceJson = json.encode(lyricSourceMaps);
-    final output = await File(lyricSourcePath).create(recursive: true);
-    await output.writeAsString(lyricSourceJson);
-  } catch (err, trace) {
-    LOGGER.e(err, stackTrace: trace);
-  }
+Future<void> saveLyricSources() async {
+  _lyricSaveTimer?.cancel();
+  if (!lyricSourcesLoaded) return;
+  final supportPath = (await getAppDataDir()).path;
+  await writeJsonSafely('$supportPath/lyric_source.json',
+      LYRIC_SOURCES.map((key, value) => MapEntry(key, value.toMap())));
 }

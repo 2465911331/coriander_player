@@ -1,3 +1,7 @@
+import 'package:coriander_player/app_design.dart';
+import 'package:coriander_player/hotkeys_helper.dart';
+import 'package:coriander_player/appearance.dart';
+import 'package:coriander_player/app_settings.dart';
 import 'package:coriander_player/library/audio_library.dart';
 import 'package:coriander_player/component/app_shell.dart';
 import 'package:coriander_player/page/album_detail_page.dart';
@@ -35,8 +39,8 @@ class SlideTransitionPage<T> extends CustomTransitionPage<T> {
     super.key,
   }) : super(
           transitionsBuilder: _transitionsBuilder,
-          transitionDuration: const Duration(milliseconds: 150),
-          reverseTransitionDuration: const Duration(milliseconds: 150),
+          transitionDuration: AppMotion.page,
+          reverseTransitionDuration: AppMotion.page,
         );
 
   static Widget _transitionsBuilder(
@@ -45,17 +49,7 @@ class SlideTransitionPage<T> extends CustomTransitionPage<T> {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    final tween = Tween(
-      begin: const Offset(0, 0.10),
-      end: const Offset(0, 0),
-    );
-
-    return SlideTransition(
-      position: tween.animate(
-        CurvedAnimation(parent: animation, curve: Curves.fastOutSlowIn),
-      ),
-      child: child,
-    );
+    return AppPageTransition(animation: animation, child: child);
   }
 }
 
@@ -67,28 +61,7 @@ class Entry extends StatelessWidget {
     required ColorScheme colorScheme,
     String? fontFamily,
   }) {
-    final bool isDark = colorScheme.brightness == Brightness.dark;
-
-    // For surfaces that use primary color in light themes and surface color in dark
-    final Color primarySurfaceColor =
-        isDark ? colorScheme.surface : colorScheme.primary;
-    final Color onPrimarySurfaceColor =
-        isDark ? colorScheme.onSurface : colorScheme.onPrimary;
-
-    return ThemeData(
-      fontFamily: fontFamily,
-      colorScheme: colorScheme,
-      brightness: colorScheme.brightness,
-      primaryColor: primarySurfaceColor,
-      canvasColor: colorScheme.surface,
-      scaffoldBackgroundColor: colorScheme.surface,
-      cardColor: colorScheme.surface,
-      dividerColor: colorScheme.onSurface.withOpacity(0.12),
-      indicatorColor: onPrimarySurfaceColor,
-      applyElevationOverlayColor: isDark,
-      useMaterial3: true,
-      dialogTheme: DialogThemeData(backgroundColor: colorScheme.surface),
-    );
+    return AppDesign.theme(colorScheme, fontFamily);
   }
 
   @override
@@ -98,6 +71,18 @@ class Entry extends StatelessWidget {
       builder: (context, _) {
         final theme = Provider.of<ThemeProvider>(context);
         return MaterialApp.router(
+          builder: (context, child) => AppearanceScope(
+              preferences: AppSettings.instance.appearance,
+              child: PlayerEscapeShortcut(
+                  onEscape: () {
+                    final navigator = ROUTER_KEY.currentState;
+                    if (navigator?.canPop() == true) {
+                      navigator!.pop();
+                    } else if (config.canPop()) {
+                      config.pop();
+                    }
+                  },
+                  child: child!)),
           scaffoldMessengerKey: SCAFFOLD_MESSAGER,
           debugShowCheckedModeBanner: false,
           theme: fromSchemeAndFontFamily(
@@ -257,19 +242,11 @@ class Entry extends StatelessWidget {
         path: app_paths.NOW_PLAYING_PAGE,
         pageBuilder: (context, state) => CustomTransitionPage(
           maintainState: false,
-          transitionsBuilder: (context, animation, _, child) {
-            final tween = Tween(
-              begin: const Offset(0, 1),
-              end: const Offset(0, 0),
-            );
-
-            return SlideTransition(
-              position: tween.animate(
-                CurvedAnimation(parent: animation, curve: Curves.fastOutSlowIn),
-              ),
-              child: child,
-            );
-          },
+          transitionDuration: AppMotion.artwork,
+          reverseTransitionDuration: AppMotion.artwork,
+          transitionsBuilder: (context, animation, _, child) =>
+              AppPageTransition(
+                  animation: animation, player: true, child: child),
           child: const NowPlayingPage(),
         ),
       ),

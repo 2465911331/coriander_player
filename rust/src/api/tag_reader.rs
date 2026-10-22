@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashSet, HashMap},
     fs::{self},
     io::{self, Cursor, Write},
     path::{Path, PathBuf},
@@ -12,7 +12,7 @@ use windows::{
     core::Interface,
     core::HSTRING,
     Storage::{
-        FileProperties::ThumbnailMode,
+        FileProperties::{ThumbnailMode, ThumbnailType},
         StorageFile,
         Streams::{DataReader, IInputStream},
     },
@@ -454,6 +454,12 @@ fn _get_picture_by_windows(path: &String) -> Result<Vec<u8>, windows::core::Erro
         .GetThumbnailAsyncOverloadDefaultSizeDefaultOptions(ThumbnailMode::MusicView)?
         .get()?;
 
+    // Shell file-type icons are not album art. Let Flutter render its themed
+    // placeholder when the file has no actual thumbnail.
+    if thumbnail.Type()? != ThumbnailType::Image {
+        thumbnail.Close()?;
+        return Ok(Vec::new());
+    }
     let size = thumbnail.Size()? as u32;
     let stream: IInputStream = thumbnail.cast()?;
 
@@ -485,6 +491,7 @@ fn _get_picture_by_lofty(path: &String) -> Option<Vec<u8>> {
 pub fn get_picture_from_path(path: String, width: u32, height: u32) -> Option<Vec<u8>> {
     let pic_option =
         _get_picture_by_lofty(&path).or_else(|| match _get_picture_by_windows(&path) {
+            Ok(val) if val.is_empty() => None,
             Ok(val) => Some(val),
             Err(err) => {
                 log_to_dart(format!("fail to get pic: {}", err));
@@ -605,11 +612,12 @@ pub fn build_index_from_folders_recursively(
     let json_value = serde_json::json!({
         "version": 110,
         "folders": audio_folders_json,
+        "roots": folders,
     });
 
     let mut index_path = PathBuf::from(index_path);
     index_path.push("index.json");
-    fs::File::create(index_path)?.write_all(json_value.to_string().as_bytes())?;
+    _write_index(&index_path, &json_value)?;
 
     Ok(())
 }
@@ -662,138 +670,229 @@ fn _update_index_below_1_1_0(
 /// 2. 遍历该文件夹索引，如果文件被修改（再次读取到的 modified > 记录的 modified），重新读取标签；没有则跳过它
 /// 3. 遍历该文件夹，添加新增（读取到的 created > 记录的 latest）的音乐文件
 pub fn update_index(index_path: String, sink: StreamSink<IndexActionState>) -> anyhow::Result<()> {
-    let mut index_path = PathBuf::from(index_path);
-    index_path.push("index.json");
-    let index = fs::read(&index_path)?;
-    let mut index: serde_json::Value = serde_json::from_slice(&index)?;
-
-    let version = index["version"].as_u64();
-    if version.is_none() {
+    let index_path = PathBuf::from(index_path).join("index.json");
+    let mut index: serde_json::Value = match fs::read(&index_path)
+        .map_err(anyhow::Error::from)
+        .and_then(|bytes| Ok(serde_json::from_slice(&bytes)?)) {
+        Ok(value) => value,
+        Err(original) => {
+            let backup = index_path.with_extension("json.bak");
+            if !backup.exists() { return Err(original); }
+            serde_json::from_slice(&fs::read(backup)?)?
+        }
+    };
+    if index.is_array() {
         return Ok(_update_index_below_1_1_0(&index, &index_path, &sink)?);
     }
+    _refresh_index(&mut index, |folder| {
+        let _ = sink.add(IndexActionState {
+            progress: 0.0,
+            message: format!("正在检查 {}", folder),
+        });
+    })?;
+    _write_index(&index_path, &index)?;
+    let _ = sink.add(IndexActionState { progress: 1.0, message: String::new() });
+    Ok(())
+}
 
-    let folders = index["folders"].as_array_mut().unwrap();
-    // 删除访问不到的文件夹的记录
-    folders.retain(|item| {
-        let path = item["path"].as_str().unwrap();
+fn _write_index(path: &Path, value: &serde_json::Value) -> io::Result<()> {
+    let temporary = path.with_extension("json.tmp");
+    let mut file = fs::File::create(&temporary)?;
+    file.write_all(value.to_string().as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    if let Ok(old) = fs::read(path) {
+        if serde_json::from_slice::<serde_json::Value>(&old).is_ok() {
+            let backup_tmp = path.with_extension("json.bak.tmp");
+            let mut backup = fs::File::create(&backup_tmp)?;
+            backup.write_all(&old)?;
+            backup.sync_all()?;
+            drop(backup);
+            fs::rename(backup_tmp, path.with_extension("json.bak"))?;
+        }
+    }
+    fs::rename(temporary, path)
+}
 
-        Path::new(path).exists()
-    });
+fn _path_key(path: &Path) -> String {
+    path.to_string_lossy().replace('/', "\\").to_lowercase()
+}
 
-    let mut updated = 0;
-    let total = folders.len();
+fn _refresh_index(index: &mut serde_json::Value, mut progress: impl FnMut(&str)) -> anyhow::Result<()> {
+    let folders = index["folders"].as_array()
+        .ok_or_else(|| anyhow::anyhow!("Invalid music index: folders must be an array"))?;
+    let mut indexed = HashMap::new();
+    for folder in folders {
+        let path = folder["path"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid music folder path"))?;
+        indexed.insert(_path_key(Path::new(path)), folder.clone());
+    }
+    let roots: Vec<String> = match index["roots"].as_array() {
+        Some(roots) => roots.iter().filter_map(|r| r.as_str().map(String::from)).collect(),
+        None => folders.iter().filter_map(|f| f["path"].as_str().map(String::from)).collect(),
+    };
+    let mut visited = HashSet::new();
+    for root in &roots {
+        _refresh_folder(Path::new(root), &mut indexed, &mut visited, &mut progress);
+    }
+    // Unreachable folders stay indexed so unplugged disks do not lose their library.
+    let mut folders: Vec<_> = indexed.into_values().collect();
+    folders.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
+    index["folders"] = serde_json::json!(folders);
+    index["roots"] = serde_json::json!(roots);
+    Ok(())
+}
 
-    for folder_item in folders {
-        let folder_path = folder_item["path"].as_str().unwrap().to_string();
-        let latest = folder_item["latest"].as_u64().unwrap();
-        let old_folder_modified = folder_item["modified"].as_u64().unwrap();
-
-        let new_folder_modified = match fs::metadata(&folder_path) {
-            Ok(value) => match value.modified() {
-                Ok(value) => value
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or(Duration::ZERO)
-                    .as_secs(),
-                Err(_) => continue,
-            },
-            Err(_) => continue,
-        };
-
-        // 跳过没有被修改的文件夹
-        if new_folder_modified <= old_folder_modified {
-            updated += 1;
+fn _refresh_folder(
+    path: &Path,
+    indexed: &mut HashMap<String, serde_json::Value>,
+    visited: &mut HashSet<String>,
+    progress: &mut impl FnMut(&str),
+) {
+    let canonical = match fs::canonicalize(path) { Ok(p) => p, Err(_) => return };
+    if !visited.insert(_path_key(&canonical)) { return; }
+    let entries: Vec<_> = match fs::read_dir(path).and_then(|entries| entries.collect::<io::Result<Vec<_>>>()) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    progress(&path.to_string_lossy());
+    let key = _path_key(path);
+    let mut old_audios = HashMap::new();
+    if let Some(audios) = indexed.get(&key).and_then(|f| f["audios"].as_array()) {
+        for audio in audios {
+            if let Some(path) = audio["path"].as_str() {
+                old_audios.insert(_path_key(Path::new(path)), audio.clone());
+            }
+        }
+    }
+    let mut audios = Vec::new();
+    for entry in entries {
+        let file_type = match entry.file_type() { Ok(t) => t, Err(_) => return };
+        if file_type.is_symlink() { continue; }
+        if file_type.is_dir() {
+            _refresh_folder(&entry.path(), indexed, visited, progress);
             continue;
         }
-
-        let _ = sink.add(IndexActionState {
-            progress: updated as f64 / total as f64,
-            message: String::from("正在更新 ") + &folder_path,
-        });
-
-        folder_item["modified"] = serde_json::json!(new_folder_modified);
-
-        // 删除访问不到的文件的记录
-        let audios = folder_item["audios"].as_array_mut().unwrap();
-        audios.retain(|item| {
-            let path = item["path"].as_str().unwrap();
-
-            Path::new(path).exists()
-        });
-
-        for audio_item in &mut *audios {
-            let old_audio_modified = audio_item["modified"].as_u64().unwrap();
-            let audio_path = audio_item["path"].as_str().unwrap();
-            let new_audio_modified = match fs::metadata(&audio_path) {
-                Ok(value) => match value.modified() {
-                    Ok(value) => value
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or(Duration::ZERO)
-                        .as_secs(),
-                    Err(_) => continue,
-                },
-                Err(_) => continue,
-            };
-            // 跳过没有被修改的文件
-            if new_audio_modified <= old_audio_modified {
+        if !file_type.is_file() { continue; }
+        let file_key = _path_key(&entry.path());
+        let metadata = match entry.metadata() { Ok(m) => m, Err(_) => return };
+        let modified_ns = metadata.modified().unwrap_or(UNIX_EPOCH)
+            .duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+        let old = old_audios.get(&file_key);
+        if let Some(old) = old {
+            if old["size"].as_u64() == Some(metadata.len())
+                && old["modified_ns"].as_u64() == Some(modified_ns) {
+                audios.push(old.clone());
                 continue;
             }
-
-            // 重新读取被修改的音乐文件的标签并更新
-            if let Some(modified_audio) = Audio::read_from_path(Path::new(audio_path)) {
-                *audio_item = modified_audio.to_json_value();
-            }
         }
-
-        // 添加新增的音乐文件
-        let mut new_latest: u64 = latest;
-        let dir = match fs::read_dir(folder_path) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        for entry in dir {
-            let entry = match entry {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            let file_type = match entry.file_type() {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            if file_type.is_dir() {
-                continue;
-            }
-
-            let entry_created = match entry.metadata() {
-                Ok(value) => match value.created() {
-                    Ok(value) => value
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or(Duration::ZERO)
-                        .as_secs(),
-                    Err(_) => continue,
-                },
-                Err(_) => continue,
-            };
-            if entry_created > latest {
-                if let Some(new_audio) = Audio::read_from_path(entry.path()) {
-                    if entry_created > new_latest {
-                        new_latest = entry_created;
-                    }
-
-                    audios.push(new_audio.to_json_value());
-                }
-            }
+        if let Some(audio) = Audio::read_from_path(entry.path()) {
+            let mut value = audio.to_json_value();
+            value["size"] = serde_json::json!(metadata.len());
+            value["modified_ns"] = serde_json::json!(modified_ns);
+            audios.push(value);
+        } else if let Some(old) = old {
+            audios.push(old.clone());
         }
-
-        folder_item["latest"] = serde_json::json!(new_latest);
-
-        updated += 1;
-        let _ = sink.add(IndexActionState {
-            progress: updated as f64 / total as f64,
-            message: String::new(),
-        });
     }
-
-    fs::File::create(index_path)?.write_all(index.to_string().as_bytes())?;
-
-    Ok(())
+    audios.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
+    let latest = audios.iter().filter_map(|a| a["created"].as_u64()).max().unwrap_or(0);
+    let modified = fs::metadata(path).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH)
+        .duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    if !audios.is_empty() || indexed.contains_key(&key) {
+        indexed.insert(key, serde_json::json!({
+            "path": path.to_string_lossy(), "modified": modified,
+            "latest": latest, "audios": audios,
+        }));
+    }
+}
+#[cfg(test)]
+mod reliability_tests {
+    use super::*;
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let name = format!("coriander-index-{}-{}", std::process::id(),
+                std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+            let path = std::env::temp_dir().join(name);
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        fn index(&self) -> serde_json::Value {
+            serde_json::json!({"version":110,"roots":[self.0.to_string_lossy()],"folders":[]})
+        }
+    }
+    impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+    fn wav(path: &Path, samples: u32) {
+        let size = samples * 2;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF"); bytes.extend_from_slice(&(36 + size).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt "); bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&8000u32.to_le_bytes()); bytes.extend_from_slice(&16000u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes()); bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data"); bytes.extend_from_slice(&size.to_le_bytes());
+        bytes.resize((44 + size) as usize, 0);
+        fs::write(path, bytes).unwrap();
+    }
+    #[test]
+    fn discovers_old_timestamp_files_and_new_subdirectories() {
+        let fixture = Fixture::new();
+        let mut index = fixture.index();
+        _refresh_index(&mut index, |_| {}).unwrap();
+        let nested = fixture.0.join("new-album");
+        fs::create_dir_all(&nested).unwrap();
+        wav(&nested.join("song.wav"), 800);
+        _refresh_index(&mut index, |_| {}).unwrap();
+        assert_eq!(index["folders"].as_array().unwrap().len(), 1);
+        index["folders"][0]["latest"] = serde_json::json!(u64::MAX);
+        wav(&nested.join("another.wav"), 800);
+        _refresh_index(&mut index, |_| {}).unwrap();
+        assert_eq!(index["folders"][0]["audios"].as_array().unwrap().len(), 2);
+    }
+    #[test]
+    fn reuses_unchanged_tags_but_detects_file_changes_and_deletions() {
+        let fixture = Fixture::new();
+        let file = fixture.0.join("song.wav");
+        wav(&file, 800);
+        let mut index = fixture.index();
+        _refresh_index(&mut index, |_| {}).unwrap();
+        index["folders"][0]["audios"][0]["title"] = serde_json::json!("cached-title");
+        _refresh_index(&mut index, |_| {}).unwrap();
+        assert_eq!(index["folders"][0]["audios"][0]["title"], "cached-title");
+        // Alter a file without adding or removing a directory entry.
+        wav(&file, 1600);
+        _refresh_index(&mut index, |_| {}).unwrap();
+        assert_eq!(index["folders"][0]["audios"][0]["size"], 3244);
+        assert_ne!(index["folders"][0]["audios"][0]["title"], "cached-title");
+        fs::remove_file(file).unwrap();
+        _refresh_index(&mut index, |_| {}).unwrap();
+        assert_eq!(index["folders"][0]["audios"].as_array().unwrap().len(), 0);
+    }
+    #[test]
+    fn retains_offline_folders_and_deduplicates_overlapping_roots() {
+        let fixture = Fixture::new();
+        wav(&fixture.0.join("song.wav"), 800);
+        let mut index = fixture.index();
+        index["roots"] = serde_json::json!([fixture.0.to_string_lossy(), fixture.0.to_string_lossy()]);
+        _refresh_index(&mut index, |_| {}).unwrap();
+        assert_eq!(index["folders"].as_array().unwrap().len(), 1);
+        let moved = fixture.0.with_extension("offline");
+        fs::rename(&fixture.0, &moved).unwrap();
+        let result = _refresh_index(&mut index, |_| {});
+        fs::rename(&moved, &fixture.0).unwrap();
+        result.unwrap();
+        assert_eq!(index["folders"][0]["audios"].as_array().unwrap().len(), 1);
+    }
+    #[test]
+    fn index_replacement_keeps_a_valid_backup() {
+        let fixture = Fixture::new();
+        let path = fixture.0.join("index.json");
+        _write_index(&path, &serde_json::json!({"version":1})).unwrap();
+        _write_index(&path, &serde_json::json!({"version":2})).unwrap();
+        let backup: serde_json::Value = serde_json::from_slice(&fs::read(path.with_extension("json.bak")).unwrap()).unwrap();
+        assert_eq!(backup["version"], 1);
+        let current: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(current["version"], 2);
+    }
 }

@@ -222,6 +222,12 @@ Win32Window::MessageHandler(HWND hwnd,
 }
 
 void Win32Window::Destroy() {
+  // Engine shutdown can block while releasing renderer and plugin resources.
+  // Remove the native window first so its last frame cannot remain visible
+  // as an unresponsive window during that work.
+  if (window_handle_) {
+    ShowWindow(window_handle_, SW_HIDE);
+  }
   OnDestroy();
 
   if (window_handle_) {

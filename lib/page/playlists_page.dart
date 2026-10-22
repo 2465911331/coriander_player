@@ -1,6 +1,10 @@
+import 'package:coriander_player/component/library_card.dart';
+import 'package:coriander_player/play_service/play_service.dart';
 import 'package:coriander_player/app_preference.dart';
 import 'package:coriander_player/utils.dart';
-import 'package:coriander_player/hotkeys_helper.dart';
+
+import 'package:coriander_player/library/audio_library.dart';
+import 'package:coriander_player/page/playlist_editor_dialog.dart';
 import 'package:coriander_player/page/uni_page.dart';
 import 'package:coriander_player/library/playlist.dart';
 import 'package:coriander_player/app_paths.dart' as app_paths;
@@ -16,14 +20,15 @@ class PlaylistsPage extends StatefulWidget {
 }
 
 class _PlaylistsPageState extends State<PlaylistsPage> {
-  void newPlaylist(BuildContext context) async {
-    final name = await showDialog<String>(
+  void newPlaylist(BuildContext context, {bool smart = false}) async {
+    final created = await showDialog<Playlist>(
       context: context,
-      builder: (context) => const _NewPlaylistDialog(),
+      builder: (context) => PlaylistEditorDialog(smart: smart),
     );
-    if (name == null) return;
+    if (created == null || !mounted) return;
     setState(() {
-      PLAYLISTS.add(Playlist(name, {}));
+      PLAYLISTS.add(created);
+      schedulePlaylistSave();
     });
   }
 
@@ -31,71 +36,137 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     BuildContext context,
     Playlist playlist,
   ) async {
-    final name = await showDialog<String>(
+    final edited = await showDialog<Playlist>(
       context: context,
-      builder: (context) => const _EditPlaylistDialog(),
+      builder: (context) => PlaylistEditorDialog(initial: playlist),
     );
-    if (name == null) return;
+    if (edited == null || !mounted) return;
     setState(() {
-      playlist.name = name;
+      playlist.name = edited.name;
+      playlist.smartRule = edited.smartRule;
+      schedulePlaylistSave();
     });
+  }
+
+  void deletePlaylist(BuildContext context, Playlist item) {
+    final index = PLAYLISTS.indexOf(item);
+    if (index < 0) return;
+    setState(() => PLAYLISTS.remove(item));
+    schedulePlaylistSave();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+          content: Text('已删除歌单“${item.name}”，音乐文件保留'),
+          duration: const Duration(seconds: 6),
+          action: SnackBarAction(
+              label: '撤销',
+              onPressed: () {
+                if (PLAYLISTS.contains(item)) return;
+                PLAYLISTS.insert(index.clamp(0, PLAYLISTS.length), item);
+                if (mounted) setState(() {});
+                schedulePlaylistSave();
+              })));
   }
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+        valueListenable: AudioLibrary.revision,
+        builder: (context, _, __) => _buildContent(context));
+  }
+
+  Widget _buildContent(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
     return UniPage<Playlist>(
+      useMediaCards: true,
       pref: AppPreference.instance.playlistsPagePref,
       title: "歌单",
       subtitle: "${PLAYLISTS.length} 个歌单",
       contentList: PLAYLISTS,
-      contentBuilder: (context, item, i, multiSelectController) => ListTile(
-        title: Text(
-          PLAYLISTS[i].name,
-          softWrap: false,
-          maxLines: 1,
-        ),
-        subtitle: Text(
-          "${PLAYLISTS[i].audios.length}首乐曲",
-          softWrap: false,
-          maxLines: 1,
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: "编辑",
-              onPressed: () => editPlaylist(context, PLAYLISTS[i]),
-              icon: const Icon(Symbols.edit),
-            ),
-            const SizedBox(width: 8.0),
-            IconButton(
-              tooltip: "删除",
-              onPressed: () => setState(() {
-                PLAYLISTS.remove(PLAYLISTS[i]);
-              }),
-              color: scheme.error,
-              icon: const Icon(Symbols.delete),
-            ),
+      contentBuilder: (context, item, i, multiSelectController) =>
+          LibraryViewScope.cardsOf(context)
+              ? LibraryMediaCard(
+                  title: item.name,
+                  subtitle: '${item.audios.length} 首乐曲',
+                  badge: item.isSmart ? '智能歌单' : null,
+                  artwork: _PlaylistArtwork(playlist: item),
+                  onTap: () =>
+                      context.push(app_paths.PLAYLIST_DETAIL_PAGE, extra: item),
+                  playLabel: '播放歌单',
+                  onPlay: item.audios.isEmpty
+                      ? null
+                      : () => PlayService.instance.playbackService
+                          .play(0, item.audios.values.toList()),
+                  menu: PopupMenuButton<String>(
+                      tooltip: '更多',
+                      padding: EdgeInsets.zero,
+                      iconSize: 20,
+                      onSelected: (value) {
+                        if (value == 'edit') {
+                          editPlaylist(context, item);
+                        } else {
+                          deletePlaylist(context, item);
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                            PopupMenuItem(value: 'edit', child: Text('编辑')),
+                            PopupMenuItem(value: 'delete', child: Text('删除'))
+                          ]))
+              : ListTile(
+                  title: Text(
+                    item.name,
+                    softWrap: false,
+                    maxLines: 1,
+                  ),
+                  subtitle: Text(
+                    "${item.isSmart ? '智能歌单 · ' : ''}${item.audios.length} 首乐曲",
+                    softWrap: false,
+                    maxLines: 1,
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: "编辑",
+                        onPressed: () => editPlaylist(context, item),
+                        icon: const Icon(Symbols.edit),
+                      ),
+                      const SizedBox(width: 8.0),
+                      IconButton(
+                        tooltip: "删除",
+                        onPressed: () => deletePlaylist(context, item),
+                        color: scheme.error,
+                        icon: const Icon(Symbols.delete),
+                      ),
+                    ],
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                  onTap: () => context.push(
+                    app_paths.PLAYLIST_DETAIL_PAGE,
+                    extra: item,
+                  ),
+                ),
+      primaryAction: MenuAnchor(
+          menuChildren: [
+            MenuItemButton(
+                onPressed: () => newPlaylist(context),
+                child: const Text('普通歌单')),
+            MenuItemButton(
+                onPressed: () => newPlaylist(context, smart: true),
+                child: const Text('智能歌单')),
           ],
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.0),
-        ),
-        onTap: () => context.push(
-          app_paths.PLAYLIST_DETAIL_PAGE,
-          extra: PLAYLISTS[i],
-        ),
-      ),
-      primaryAction: FilledButton.icon(
-        onPressed: () => newPlaylist(context),
-        icon: const Icon(Symbols.add),
-        label: const Text("新建歌单"),
-        style: const ButtonStyle(
-          fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
-        ),
-      ),
+          builder: (context, controller, _) => FilledButton.icon(
+                onPressed: () =>
+                    controller.isOpen ? controller.close() : controller.open(),
+                icon: const Icon(Symbols.add),
+                label: const Text("新建歌单"),
+                style: const ButtonStyle(
+                  minimumSize: WidgetStatePropertyAll(Size(0, 40)),
+                ),
+              )),
       enableShufflePlay: false,
       enableSortMethod: true,
       enableSortOrder: true,
@@ -134,144 +205,35 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   }
 }
 
-class _NewPlaylistDialog extends StatelessWidget {
-  const _NewPlaylistDialog();
-
+class _PlaylistArtwork extends StatelessWidget {
+  const _PlaylistArtwork({required this.playlist});
+  final Playlist playlist;
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final editingController = TextEditingController();
-
-    return Dialog(
-      insetPadding: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12.0),
-      ),
-      child: SizedBox(
-        width: 350.0,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
-                child: Text(
-                  "新建歌单",
-                  style: TextStyle(
-                    color: scheme.onSurface,
-                    fontSize: 18.0,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              Focus(
-                onFocusChange: HotkeysHelper.onFocusChanges,
-                child: TextField(
-                  autofocus: true,
-                  controller: editingController,
-                  onSubmitted: (value) {
-                    Navigator.pop(context, value);
-                  },
-                  decoration: const InputDecoration(
-                    labelText: "歌单名称",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16.0),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text("取消"),
-                  ),
-                  const SizedBox(width: 8.0),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(context, editingController.text);
-                    },
-                    child: const Text("创建"),
-                  ),
-                ],
-              )
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EditPlaylistDialog extends StatelessWidget {
-  const _EditPlaylistDialog();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final editingController = TextEditingController();
-
-    return Dialog(
-      insetPadding: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12.0),
-      ),
-      child: SizedBox(
-        width: 350.0,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
-                child: Text(
-                  "修改歌单",
-                  style: TextStyle(
-                    color: scheme.onSurface,
-                    fontSize: 18.0,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              Focus(
-                onFocusChange: HotkeysHelper.onFocusChanges,
-                child: TextField(
-                  autofocus: true,
-                  controller: editingController,
-                  onSubmitted: (value) {
-                    Navigator.pop(context, value);
-                  },
-                  decoration: const InputDecoration(
-                    labelText: "新歌单名称",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16.0),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text("取消"),
-                  ),
-                  const SizedBox(width: 8.0),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(context, editingController.text);
-                    },
-                    child: const Text("创建"),
-                  ),
-                ],
-              )
-            ],
-          ),
-        ),
-      ),
-    );
+    final audios = playlist.audios.values.take(4).toList();
+    Widget cover(Audio audio) => LibraryArtwork(
+        identity: audio,
+        seed: audio.album,
+        kind: LibraryArtworkKind.playlist,
+        load: () => audio.mediumCover);
+    if (audios.isEmpty)
+      return LibraryArtwork(
+          identity: playlist,
+          seed: playlist.name,
+          kind: LibraryArtworkKind.playlist);
+    if (audios.length < 4) return cover(audios.first);
+    return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Column(children: [
+          for (var row = 0; row < 2; row++)
+            Expanded(
+                child: Row(children: [
+              for (var col = 0; col < 2; col++)
+                Expanded(
+                    child: Padding(
+                        padding: const EdgeInsets.all(1),
+                        child: cover(audios[row * 2 + col])))
+            ]))
+        ]));
   }
 }

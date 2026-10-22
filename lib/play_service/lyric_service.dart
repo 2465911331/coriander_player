@@ -1,160 +1,110 @@
 import 'dart:async';
 import 'dart:math';
-
 import 'package:coriander_player/app_settings.dart';
 import 'package:coriander_player/library/audio_library.dart';
 import 'package:coriander_player/lyric/lrc.dart';
 import 'package:coriander_player/lyric/lyric.dart';
+import 'package:coriander_player/lyric/lyric_session.dart';
 import 'package:coriander_player/lyric/lyric_source.dart';
 import 'package:coriander_player/music_matcher.dart';
 import 'package:coriander_player/play_service/play_service.dart';
+import 'package:coriander_player/utils.dart';
 import 'package:flutter/foundation.dart';
 
-/// 只通知 lyric 变更
 class LyricService extends ChangeNotifier {
   final PlayService playService;
+  final _session = LyricSession();
+  final _lines = StreamController<int>.broadcast();
+  late final StreamSubscription<double> _positionSubscription;
+  int _currentLine = -1;
+  bool _disposed = false;
 
-  late StreamSubscription _positionStreamSubscription;
   LyricService(this.playService) {
-    _positionStreamSubscription =
-        playService.playbackService.positionStream.listen((pos) {
-      currLyricFuture.then((value) {
-        if (value == null) return;
-        if (_nextLyricLine >= value.lines.length) return;
-
-        if ((pos * 1000) > value.lines[_nextLyricLine].start.inMilliseconds) {
-          _nextLyricLine += 1;
-
-          final currLineIndex = _nextLyricLine - 1;
-          _lyricLineStreamController.add(currLineIndex);
-
-          playService.desktopLyricService.canSendMessage.then((canSend) {
-            if (!canSend) return;
-
-            final currLine = value.lines[currLineIndex];
-            playService.desktopLyricService.sendLyricLineMessage(currLine);
-          });
-        }
-      });
-    });
+    _positionSubscription = playService.playbackService.positionStream.listen(
+      (position) => _updatePosition(position),
+    );
   }
 
-  Audio? _getNowPlaying() => playService.playbackService.nowPlaying;
-
-  /// 供 widget 使用
   Future<Lyric?> currLyricFuture = Future.value(null);
+  Lyric? get currentLyric => _session.value;
 
-  /// 下一行歌词
-  int _nextLyricLine = 0;
-
-  late final StreamController<int> _lyricLineStreamController =
-      StreamController.broadcast(onListen: () {
-    _lyricLineStreamController.add(_nextLyricLine);
-  });
-
-  Stream<int> get lyricLineStream => _lyricLineStreamController.stream;
-
-  /// 重新计算歌词进行到第几行
-  void findCurrLyricLine() {
-    currLyricFuture.then((value) {
-      if (value == null) return;
-
-      final next = value.lines.indexWhere(
-        (element) =>
-            element.start.inMilliseconds / 1000 >
-            playService.playbackService.position,
-      );
-      _nextLyricLine = next == -1 ? value.lines.length : next;
-      _lyricLineStreamController.add(max(_nextLyricLine - 1, 0));
-    });
+  Stream<int> get lyricLineStream async* {
+    if (_disposed) return;
+    yield max(_currentLine, 0);
+    yield* _lines.stream;
   }
 
-  Future<Lyric?> _getLyricDefault(bool localFirst) async {
-    final nowPlaying = _getNowPlaying();
-    if (nowPlaying == null) return Future.value(null);
-
-    if (localFirst) {
-      return (await Lrc.fromAudioPath(nowPlaying)) ??
-          (await getMostMatchedLyric(nowPlaying));
-    }
-    return (await getMostMatchedLyric(nowPlaying)) ??
-        (await Lrc.fromAudioPath(nowPlaying));
-  }
-
-  /// 根据默认歌词来源获取歌词：
-  /// 1. 如果没有指定来源，按照现在的方式寻找歌词（本地优先或在线优先）
-  /// 2. 如果指定来源，按照指定的来源获取
-  void updateLyric() {
-    final nowPlaying = _getNowPlaying();
-    if (nowPlaying == null) return;
-
-    currLyricFuture.ignore();
-
-    final lyricSource = LYRIC_SOURCES[nowPlaying.path];
-    if (lyricSource == null) {
-      currLyricFuture = _getLyricDefault(AppSettings.instance.localLyricFirst);
+  void _updatePosition(double seconds, {bool force = false}) {
+    if (_disposed || _session.value == null) return;
+    final index =
+        _session.lineAt(Duration(milliseconds: (seconds * 1000).floor()));
+    if (!force && index == _currentLine) return;
+    _currentLine = index;
+    final lyric = _session.value!;
+    if (lyric.lines.isEmpty) return;
+    _lines.add(max(index, 0));
+    if (index >= 0) {
+      playService.desktopLyricService.sendLyricLineMessage(lyric.lines[index]);
     } else {
-      if (lyricSource.source == LyricSourceType.local) {
-        currLyricFuture = Lrc.fromAudioPath(nowPlaying);
-      } else {
-        currLyricFuture = getOnlineLyric(
-          qqSongId: lyricSource.qqSongId,
-          kugouSongHash: lyricSource.kugouSongHash,
-          neteaseSongId: lyricSource.neteaseSongId,
-        );
-      }
+      playService.desktopLyricService.clearLyric();
     }
+  }
 
-    currLyricFuture.then((value) {
-      _nextLyricLine = 0;
+  void findCurrLyricLine() =>
+      _updatePosition(playService.playbackService.position, force: true);
+
+  Future<Lyric?> _getDefault(Audio audio) async {
+    if (AppSettings.instance.localLyricFirst) {
+      return await Lrc.fromAudioPath(audio) ?? await getMostMatchedLyric(audio);
+    }
+    return await getMostMatchedLyric(audio) ?? await Lrc.fromAudioPath(audio);
+  }
+
+  void _load(Future<Lyric?> request) {
+    _currentLine = -1;
+    playService.desktopLyricService.clearLyric();
+    final safeRequest = request.catchError((Object error, StackTrace stack) {
+      LOGGER.e(error, stackTrace: stack);
+      return null;
     });
-
+    currLyricFuture = _session.load(safeRequest, findCurrLyricLine);
     notifyListeners();
+  }
+
+  void updateLyric() {
+    final audio = playService.playbackService.nowPlaying;
+    if (audio == null) return;
+    final source = LYRIC_SOURCES[audio.path];
+    if (source == null) {
+      _load(_getDefault(audio));
+    } else if (source.source == LyricSourceType.local) {
+      _load(Lrc.fromAudioPath(audio));
+    } else {
+      _load(getOnlineLyric(
+          qqSongId: source.qqSongId,
+          kugouSongHash: source.kugouSongHash,
+          neteaseSongId: source.neteaseSongId));
+    }
   }
 
   void useLocalLyric() {
-    final nowPlaying = _getNowPlaying();
-    if (nowPlaying == null) return;
-
-    currLyricFuture.ignore();
-
-    currLyricFuture = Lrc.fromAudioPath(nowPlaying);
-    currLyricFuture.then((value) {
-      findCurrLyricLine();
-    });
-
-    notifyListeners();
+    final audio = playService.playbackService.nowPlaying;
+    if (audio != null) _load(Lrc.fromAudioPath(audio));
   }
 
   void useOnlineLyric() {
-    final nowPlaying = _getNowPlaying();
-    if (nowPlaying == null) return;
-
-    currLyricFuture.ignore();
-
-    currLyricFuture = getMostMatchedLyric(nowPlaying);
-    currLyricFuture.then((value) {
-      findCurrLyricLine();
-    });
-
-    notifyListeners();
+    final audio = playService.playbackService.nowPlaying;
+    if (audio != null) _load(getMostMatchedLyric(audio));
   }
 
-  void useSpecificLyric(Lyric lyric) {
-    currLyricFuture.ignore();
-
-    currLyricFuture = Future.value(lyric);
-    currLyricFuture.then((value) {
-      findCurrLyricLine();
-    });
-
-    notifyListeners();
-  }
+  void useSpecificLyric(Lyric lyric) => _load(Future.value(lyric));
 
   @override
   void dispose() {
-    _lyricLineStreamController.close();
-    _positionStreamSubscription.cancel();
+    _disposed = true;
+    _session.dispose();
+    _positionSubscription.cancel();
+    _lines.close();
     super.dispose();
   }
 }

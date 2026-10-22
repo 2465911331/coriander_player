@@ -1,4 +1,6 @@
-import 'dart:ui';
+import 'package:coriander_player/app_design.dart';
+import 'dart:math' as math;
+import 'package:coriander_player/component/library_card.dart';
 
 import 'package:coriander_player/app_preference.dart';
 import 'package:coriander_player/page/uni_page_components.dart';
@@ -103,6 +105,7 @@ class UniPage<T> extends StatefulWidget {
     required this.contentList,
     required this.contentBuilder,
     this.primaryAction,
+    this.useMediaCards = false,
     required this.enableShufflePlay,
     required this.enableSortMethod,
     required this.enableSortOrder,
@@ -122,6 +125,7 @@ class UniPage<T> extends StatefulWidget {
   final ContentBuilder<T> contentBuilder;
 
   final Widget? primaryAction;
+  final bool useMediaCards;
 
   final bool enableShufflePlay;
   final bool enableSortMethod;
@@ -152,22 +156,25 @@ class _UniPageState<T> extends State<UniPage<T>> {
     currSortMethod?.method(widget.contentList, currSortOrder);
     if (widget.locateTo == null) return;
 
-    int targetAt = widget.contentList.indexOf(widget.locateTo as T);
+    final targetAt = widget.contentList.indexOf(widget.locateTo as T);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (currContentView == ContentView.list) {
-        scrollController.jumpTo(targetAt * 64);
-      } else {
-        final renderObject = context.findRenderObject();
-        if (renderObject is RenderBox) {
-          final ratio =
-              PlatformDispatcher.instance.views.first.devicePixelRatio;
-          final width = renderObject.size.width - 32;
-          final crossAxisCount = (width * ratio / 300).floor();
-          final offset = (targetAt ~/ crossAxisCount) * (64.0 + 8.0);
-          scrollController.jumpTo(offset);
-        }
-      }
+      if (!mounted || !scrollController.hasClients || targetAt < 0) return;
+      final offset = currContentView == ContentView.list
+          ? targetAt * _listExtent
+          : (targetAt ~/ _columns) * _rowExtent;
+      scrollController
+          .jumpTo(offset.clamp(0.0, scrollController.position.maxScrollExtent));
     });
+  }
+
+  int _columns = 1;
+  double _rowExtent = 72;
+  double _listExtent = 64;
+
+  @override
+  void dispose() {
+    scrollController.dispose();
+    super.dispose();
   }
 
   @override
@@ -193,9 +200,21 @@ class _UniPageState<T> extends State<UniPage<T>> {
   }
 
   void setContentView(ContentView contentView) {
+    final offset = scrollController.hasClients ? scrollController.offset : 0.0;
+    final first = currContentView == ContentView.list
+        ? (offset / _listExtent).floor()
+        : (offset / _rowExtent).floor() * _columns;
     setState(() {
       currContentView = contentView;
       widget.pref.contentView = contentView;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !scrollController.hasClients) return;
+      final next = contentView == ContentView.list
+          ? first * _listExtent
+          : (first ~/ _columns) * _rowExtent;
+      scrollController
+          .jumpTo(next.clamp(0.0, scrollController.position.maxScrollExtent));
     });
   }
 
@@ -252,32 +271,50 @@ class _UniPageState<T> extends State<UniPage<T>> {
               : actions,
       body: Material(
         type: MaterialType.transparency,
-        child: switch (currContentView) {
-          ContentView.list => ListView.builder(
-              controller: scrollController,
-              padding: const EdgeInsets.only(bottom: 96.0),
-              itemCount: widget.contentList.length,
-              itemExtent: 64,
-              itemBuilder: (context, i) => widget.contentBuilder(
-                context,
-                widget.contentList[i],
-                i,
-                multiSelectController,
-              ),
-            ),
-          ContentView.table => GridView.builder(
-              controller: scrollController,
-              padding: const EdgeInsets.only(bottom: 96.0),
-              gridDelegate: gridDelegate,
-              itemCount: widget.contentList.length,
-              itemBuilder: (context, i) => widget.contentBuilder(
-                context,
-                widget.contentList[i],
-                i,
-                multiSelectController,
-              ),
-            ),
-        },
+        child: LibraryViewScope(
+          cards: widget.useMediaCards && currContentView == ContentView.table,
+          child: LayoutBuilder(builder: (context, bounds) {
+            final cards = widget.useMediaCards;
+            _listExtent = AppDesign.songExtent(context);
+            _columns = cards
+                ? math.max(1, ((bounds.maxWidth + 8) / 196).floor())
+                : math.max(1, (bounds.maxWidth / 308).ceil());
+            final width =
+                (bounds.maxWidth - 8 - (_columns - 1) * 16) / _columns;
+            final extent = width +
+                76 +
+                math.max(0, MediaQuery.textScalerOf(context).scale(32) - 32);
+            _rowExtent = cards ? extent + 16 : 72;
+            Widget itemBuilder(BuildContext context, int i) =>
+                widget.contentBuilder(
+                    context, widget.contentList[i], i, multiSelectController);
+            return currContentView == ContentView.list
+                ? ListView.builder(
+                    controller: scrollController,
+                    padding: const EdgeInsets.only(bottom: 16),
+                    itemExtent: _listExtent,
+                    itemCount: widget.contentList.length,
+                    itemBuilder: itemBuilder)
+                : GridView.builder(
+                    controller: scrollController,
+                    padding: cards
+                        ? const EdgeInsets.fromLTRB(4, 8, 4, 20)
+                        : const EdgeInsets.only(bottom: 16),
+                    gridDelegate: cards
+                        ? SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: _columns,
+                            mainAxisExtent: extent,
+                            mainAxisSpacing: 16,
+                            crossAxisSpacing: 16)
+                        : SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 300,
+                            mainAxisExtent: _listExtent,
+                            mainAxisSpacing: 8,
+                            crossAxisSpacing: 8),
+                    itemCount: widget.contentList.length,
+                    itemBuilder: itemBuilder);
+          }),
+        ),
       ),
     );
   }

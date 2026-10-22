@@ -1,66 +1,58 @@
 import 'package:coriander_player/library/audio_library.dart';
+import 'package:coriander_player/component/library_card.dart';
+import 'package:coriander_player/play_service/play_service.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:material_symbols_icons/symbols.dart';
 import 'package:coriander_player/app_paths.dart' as app_paths;
 
 class AlbumTile extends StatelessWidget {
-  const AlbumTile({
-    super.key,
-    required this.album,
-  });
-
+  const AlbumTile({super.key, required this.album});
   final Album album;
-
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final placeholder = Icon(
-      Symbols.broken_image,
-      size: 48,
-      color: scheme.onSurface,
-    );
-    return Tooltip(
-      message: album.name,
-      child: InkWell(
-        onTap: () => context.push(app_paths.ALBUM_DETAIL_PAGE, extra: album),
-        borderRadius: BorderRadius.circular(8.0),
+    void open() => context.push(app_paths.ALBUM_DETAIL_PAGE, extra: album);
+    final cards = LibraryViewScope.cardsOf(context);
+    final artwork = LibraryArtwork(
+        identity: album,
+        seed: album.name,
+        kind: LibraryArtworkKind.album,
+        circular: false,
+        load: album.works.isEmpty
+            ? null
+            : () => cards
+                ? album.works.first.mediumCover
+                : album.works.first.cover);
+    if (cards)
+      return LibraryMediaCard(
+          title: album.name,
+          subtitle: '${album.works.length} 首歌曲',
+          artwork: artwork,
+          onTap: open,
+          playLabel: '播放专辑',
+          onPlay: album.works.isEmpty
+              ? null
+              : () => PlayService.instance.playbackService
+                  .play(0, List<Audio>.from(album.works)));
+    return LibrarySongRow(
+        onTap: open,
         child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Row(
-            children: [
-              FutureBuilder(
-                future: album.works.first.cover,
-                builder: (context, snapshot) {
-                  if (snapshot.data == null) {
-                    return placeholder;
-                  }
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(8.0),
-                    child: Image(
-                      image: snapshot.data!,
-                      width: 48.0,
-                      height: 48.0,
-                      errorBuilder: (_, __, ___) => placeholder,
-                    ),
-                  );
-                },
-              ),
-              Flexible(
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 8.0),
-                  child: Text(
-                    album.name,
-                    softWrap: false,
-                    maxLines: 2,
-                    style: TextStyle(color: scheme.onSurface),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+            padding: const EdgeInsets.all(8),
+            child: Row(children: [
+              SizedBox(width: 48, height: 48, child: artwork),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(album.name,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text('${album.works.length} 首歌曲',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant))
+                  ]))
+            ])));
   }
 }

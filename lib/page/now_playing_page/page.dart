@@ -1,6 +1,15 @@
+import 'package:coriander_player/app_design.dart';
+import 'package:coriander_player/component/player_artwork_hero.dart';
+import 'package:coriander_player/component/playback_queue_panel.dart';
+import 'package:coriander_player/component/audio_spectrum.dart';
+import 'package:coriander_player/play_service/waveform_model.dart';
+import 'package:coriander_player/play_service/waveform_service.dart';
 // ignore_for_file: camel_case_types
 
-import 'dart:ui';
+import 'package:coriander_player/appearance.dart';
+import 'package:coriander_player/app_settings.dart';
+import 'package:coriander_player/component/playback_visuals.dart';
+import 'package:coriander_player/component/cover_backdrop.dart';
 
 import 'package:coriander_player/app_preference.dart';
 import 'package:coriander_player/component/title_bar.dart';
@@ -50,13 +59,26 @@ class NowPlayingPage extends StatefulWidget {
 class _NowPlayingPageState extends State<NowPlayingPage> {
   final playbackService = PlayService.instance.playbackService;
   ImageProvider<Object>? nowPlayingCover;
+  String? _coverTrack;
+  int _coverGeneration = 0;
+  bool _coverInitialized = false;
 
   void updateCover() {
-    playbackService.nowPlaying?.cover.then((cover) {
-      if (mounted) {
-        setState(() {
-          nowPlayingCover = cover;
-        });
+    final audio = playbackService.nowPlaying;
+    if (_coverInitialized && _coverTrack == audio?.path) return;
+    _coverInitialized = true;
+    _coverTrack = audio?.path;
+    final generation = ++_coverGeneration;
+    setState(() => nowPlayingCover = null);
+    if (audio == null) return;
+    audio.largeCover.then((cover) {
+      if (mounted && generation == _coverGeneration) {
+        setState(() => nowPlayingCover = cover);
+      }
+    }).catchError((Object error) {
+      // A broken cover must not keep the previous song's artwork.
+      if (mounted && generation == _coverGeneration) {
+        setState(() => nowPlayingCover = null);
       }
     });
   }
@@ -76,62 +98,67 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final brightness = theme.brightness;
-    final scheme = theme.colorScheme;
-
-    return Scaffold(
-      appBar: const PreferredSize(
-        preferredSize: Size.fromHeight(56.0),
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 8.0),
-          child: Row(
-            children: [
-              NavBackBtn(),
-              Expanded(child: DragToMoveArea(child: SizedBox.expand())),
-              WindowControlls(),
-            ],
+    final preferences = AppSettings.instance.appearance;
+    return AppearanceScope(
+      preferences: preferences,
+      child: ListenableBuilder(
+        listenable: preferences,
+        builder: (context, _) => ValueListenableBuilder<bool>(
+          valueListenable: VisualActivity.instance,
+          builder: (context, visible, _) => TickerMode(
+            enabled:
+                TickerMode.of(context) && (!preferences.savePower || visible),
+            child: Builder(builder: (context) {
+              final animate = allowVisualMotion(context, preferences);
+              return Scaffold(
+                appBar: const PreferredSize(
+                    preferredSize: Size.fromHeight(56),
+                    child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: Row(children: [
+                          NavBackBtn(),
+                          Expanded(
+                              child: DragToMoveArea(child: SizedBox.expand())),
+                          WindowControlls()
+                        ]))),
+                backgroundColor:
+                    Theme.of(context).colorScheme.secondaryContainer,
+                body: Stack(fit: StackFit.expand, children: [
+                  CoverBackdrop(
+                      cover: nowPlayingCover,
+                      trackKey: _coverTrack,
+                      enabled: preferences.coverBackground,
+                      animate: animate,
+                      blur: preferences.backgroundBlur,
+                      strength: preferences.backgroundStrength),
+                  _ArtworkData(
+                      cover: nowPlayingCover,
+                      trackKey: _coverTrack,
+                      child: ChangeNotifierProvider.value(
+                          value: playbackService,
+                          builder: (context, _) => ResponsiveBuilder2(
+                              builder: (context, screenType) =>
+                                  screenType == ScreenType.small
+                                      ? const _NowPlayingPage_Small()
+                                      : const _NowPlayingPage_Large()))),
+                ]),
+              );
+            }),
           ),
         ),
       ),
-      backgroundColor: scheme.secondaryContainer,
-      body: Stack(
-        fit: StackFit.expand,
-        alignment: AlignmentDirectional.center,
-        children: [
-          if (nowPlayingCover != null) ...[
-            Image(
-              image: nowPlayingCover!,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-            ),
-            switch (brightness) {
-              Brightness.dark => const ColoredBox(color: Colors.black45),
-              Brightness.light => const ColoredBox(color: Colors.white54),
-            },
-            BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 250, sigmaY: 250),
-              child: const ColoredBox(color: Colors.transparent),
-            ),
-          ],
-          ChangeNotifierProvider.value(
-            value: PlayService.instance.playbackService,
-            builder: (context, _) {
-              return ResponsiveBuilder2(builder: (context, screenType) {
-                switch (screenType) {
-                  case ScreenType.small:
-                    return const _NowPlayingPage_Small();
-                  case ScreenType.medium:
-                  case ScreenType.large:
-                    return const _NowPlayingPage_Large();
-                }
-              });
-            },
-          ),
-        ],
-      ),
     );
   }
+}
+
+class _ArtworkData extends InheritedWidget {
+  const _ArtworkData(
+      {required this.cover, required this.trackKey, required super.child});
+  final ImageProvider? cover;
+  final String? trackKey;
+  @override
+  bool updateShouldNotify(_ArtworkData oldWidget) =>
+      cover != oldWidget.cover || trackKey != oldWidget.trackKey;
 }
 
 class _ExclusiveModeSwitch extends StatelessWidget {
@@ -414,286 +441,293 @@ class _NowPlayingMainControls extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final playbackService = PlayService.instance.playbackService;
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          tooltip: "上一曲",
-          onPressed: playbackService.lastAudio,
-          icon: const Icon(Symbols.skip_previous),
-          style: LargeFilledIconButtonStyle(primary: false, scheme: scheme),
-        ),
-        const SizedBox(width: 16),
-        StreamBuilder(
+    final preferences = AppearanceScope.of(context);
+    final animate =
+        preferences.animateControls && allowVisualMotion(context, preferences);
+    Widget button(String tooltip, IconData icon, VoidCallback action) =>
+        PlaybackPressFeedback(
+            animate: animate,
+            child: IconButton(
+                tooltip: tooltip,
+                onPressed: action,
+                icon: Icon(icon),
+                style: LargeFilledIconButtonStyle(
+                    primary: false, scheme: scheme)));
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      button('上一曲', Symbols.skip_previous, playbackService.lastAudio),
+      const SizedBox(width: 16),
+      StreamBuilder(
           stream: playbackService.playerStateStream,
           initialData: playbackService.playerState,
           builder: (context, snapshot) {
-            final playerState = snapshot.data!;
-            late void Function() onTap;
-            if (playerState == PlayerState.playing) {
-              onTap = playbackService.pause;
-            } else if (playerState == PlayerState.completed) {
-              onTap = playbackService.playAgain;
-            } else {
-              onTap = playbackService.start;
-            }
-
-            return IconButton(
-              tooltip: playerState == PlayerState.playing ? "暂停" : "播放",
-              onPressed: onTap,
-              icon: Icon(
-                playerState == PlayerState.playing
-                    ? Symbols.pause
-                    : Symbols.play_arrow,
-              ),
-              style: LargeFilledIconButtonStyle(primary: true, scheme: scheme),
-            );
-          },
-        ),
-        const SizedBox(width: 16),
-        IconButton(
-          tooltip: "下一曲",
-          onPressed: playbackService.nextAudio,
-          icon: const Icon(Symbols.skip_next),
-          style: LargeFilledIconButtonStyle(primary: false, scheme: scheme),
-        ),
-      ],
-    );
+            final playing = snapshot.data == PlayerState.playing;
+            return PlaybackPressFeedback(
+                animate: animate,
+                child: IconButton(
+                    tooltip: playing ? '暂停' : '播放',
+                    onPressed: playing
+                        ? playbackService.pause
+                        : snapshot.data == PlayerState.completed
+                            ? playbackService.playAgain
+                            : playbackService.start,
+                    icon: AnimatedPlaybackIcon(
+                        playing: playing, animate: animate),
+                    style: LargeFilledIconButtonStyle(
+                        primary: true, scheme: scheme)));
+          }),
+      const SizedBox(width: 16),
+      button('下一曲', Symbols.skip_next, playbackService.nextAudio),
+    ]);
   }
 }
 
-/// suiggly slider, position and length
+/// Native seeking behavior with a decorative wave track.
 class _NowPlayingSlider extends StatefulWidget {
   const _NowPlayingSlider();
-
   @override
   State<_NowPlayingSlider> createState() => _NowPlayingSliderState();
 }
 
 class _NowPlayingSliderState extends State<_NowPlayingSlider> {
-  final dragPosition = ValueNotifier(0.0);
-  bool isDragging = false;
+  double? _dragPosition;
+  String? _track;
+  Audio? _waveAudio;
+  Future<WaveformData?>? _waveform;
+  String _time(double value) =>
+      Duration(milliseconds: (value * 1000).round()).toStringHMMSS();
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final playbackService = context.watch<PlaybackService>();
-    final nowPlayingLength = playbackService.length;
-
-    return Column(
-      children: [
-        SliderTheme(
-          data: const SliderThemeData(
-            showValueIndicator: ShowValueIndicator.always,
-          ),
-          child: StreamBuilder(
-            stream: playbackService.playerStateStream,
-            initialData: playbackService.playerState,
-            builder: (context, playerStateSnapshot) => ListenableBuilder(
-              listenable: dragPosition,
-              builder: (context, _) => StreamBuilder(
-                stream: playbackService.positionStream,
-                initialData: playbackService.position,
-                builder: (context, positionSnapshot) => Slider(
-                  thumbColor: scheme.primary,
-                  activeColor: scheme.primary,
-                  inactiveColor: scheme.outline,
-                  min: 0.0,
-                  max: nowPlayingLength,
-                  value: isDragging
-                      ? dragPosition.value
-                      : positionSnapshot.data! > nowPlayingLength
-                          ? nowPlayingLength
-                          : positionSnapshot.data!,
-                  label: Duration(
-                    milliseconds: (dragPosition.value * 1000).toInt(),
-                  ).toStringHMMSS(),
-                  onChangeStart: (value) {
-                    isDragging = true;
-                    dragPosition.value = value;
-                  },
-                  onChanged: (value) {
-                    dragPosition.value = value;
-                  },
-                  onChangeEnd: (value) {
-                    isDragging = false;
-                    playbackService.seek(value);
-                  },
-                ),
-                // builder: (context, positionSnapshot) => SquigglySlider(
-                //   thumbColor: scheme.primary,
-                //   activeColor: scheme.primary,
-                //   inactiveColor: scheme.outline,
-                //   useLineThumb: true,
-                //   squiggleAmplitude:
-                //       playerStateSnapshot.data == PlayerState.playing ? 6.0 : 0,
-                //   squiggleWavelength: 10.0,
-                //   squiggleSpeed: 0.08,
-                //   min: 0.0,
-                //   max: nowPlayingLength,
-                //   value: isDragging
-                //       ? dragPosition.value
-                //       : positionSnapshot.data! > nowPlayingLength
-                //           ? nowPlayingLength
-                //           : positionSnapshot.data!,
-                //   label: Duration(
-                //     milliseconds: (dragPosition.value * 1000).toInt(),
-                //   ).toStringHMMSS(),
-                //   onChangeStart: (value) {
-                //     isDragging = true;
-                //     dragPosition.value = value;
-                //   },
-                //   onChanged: (value) {
-                //     dragPosition.value = value;
-                //   },
-                //   onChangeEnd: (value) {
-                //     isDragging = false;
-                //     playbackService.seek(value);
-                //   },
-                // ),
-              ),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              StreamBuilder(
-                stream: playbackService.positionStream,
-                initialData: playbackService.position,
+    final playback = context.watch<PlaybackService>();
+    final preferences = AppearanceScope.of(context);
+    final length =
+        playback.length.isFinite && playback.length > 0 ? playback.length : 0.0;
+    if (_track != playback.nowPlaying?.path) {
+      _track = playback.nowPlaying?.path;
+      _dragPosition = null;
+    }
+    final useWaveform = preferences.progress == ProgressStyle.waveform;
+    final audio = playback.nowPlaying;
+    if (useWaveform &&
+        audio != null &&
+        (!identical(_waveAudio, audio) || _waveform == null)) {
+      _waveAudio = audio;
+      _waveform = WaveformService.instance.load(audio.path);
+    }
+    return FutureBuilder<WaveformData?>(
+        future: useWaveform ? _waveform : null,
+        builder: (context, waveform) => StreamBuilder(
+            stream: playback.playerStateStream,
+            initialData: playback.playerState,
+            builder: (context, state) => StreamBuilder(
+                stream: playback.positionStream,
+                initialData: playback.position,
                 builder: (context, snapshot) {
-                  final pos = snapshot.data!;
-                  return Text(
-                    Duration(
-                      milliseconds: (pos * 1000).toInt(),
-                    ).toStringHMMSS(),
-                    style: TextStyle(color: scheme.onSecondaryContainer),
-                  );
-                },
-              ),
-              Text(
-                Duration(
-                  milliseconds: (nowPlayingLength * 1000).toInt(),
-                ).toStringHMMSS(),
-                style: TextStyle(color: scheme.onSecondaryContainer),
-              ),
-            ],
-          ),
-        )
-      ],
-    );
+                  final raw = _dragPosition ?? snapshot.data ?? 0.0;
+                  final position = raw.isFinite ? raw.clamp(0.0, length) : 0.0;
+                  return Column(children: [
+                    if (preferences.spectrum == SpectrumStyle.bars)
+                      Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+                          child: SizedBox(
+                              height: 28,
+                              child: _NowPlayingSpectrum(
+                                  playing: state.data == PlayerState.playing))),
+                    WaveSeekBar(
+                        value: position,
+                        duration: length,
+                        label: _time(position),
+                        waveform: useWaveform &&
+                                waveform.connectionState == ConnectionState.done
+                            ? waveform.data?.peaks
+                            : null,
+                        playing: state.data == PlayerState.playing,
+                        wave: preferences.progress == ProgressStyle.wave,
+                        animate: allowVisualMotion(context, preferences),
+                        amplitude: preferences.waveAmplitude,
+                        gentle: preferences.motion == MotionLevel.gentle,
+                        onChangeStart: (value) =>
+                            setState(() => _dragPosition = value),
+                        onChanged: (value) =>
+                            setState(() => _dragPosition = value),
+                        onChangeEnd: (value) {
+                          playback.seek(value);
+                          setState(() => _dragPosition = null);
+                        }),
+                    Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(_time(position)),
+                              if (useWaveform && audio != null)
+                                Expanded(
+                                    child: Center(
+                                        child: waveform.connectionState ==
+                                                ConnectionState.waiting
+                                            ? const Text('正在后台分析波形…',
+                                                style: TextStyle(fontSize: 12))
+                                            : waveform.data != null
+                                                ? const Tooltip(
+                                                    message:
+                                                        '整首歌曲的真实波形，分析结果已缓存',
+                                                    child: Text('整曲波形',
+                                                        style: TextStyle(
+                                                            fontSize: 12)))
+                                                : TextButton.icon(
+                                                    style: TextButton.styleFrom(
+                                                        minimumSize: Size.zero,
+                                                        padding: const EdgeInsets.symmetric(
+                                                            horizontal: 8)),
+                                                    onPressed: () => setState(() => _waveform =
+                                                        WaveformService.instance
+                                                            .load(audio.path)),
+                                                    icon: const Icon(Icons.refresh,
+                                                        size: 14),
+                                                    label: const Text('重试波形',
+                                                        style: TextStyle(fontSize: 12))))),
+                              Text(_time(length)),
+                            ])),
+                  ]);
+                })));
   }
 }
 
-/// title, artist, album, cover
-class _NowPlayingInfo extends StatefulWidget {
-  const _NowPlayingInfo();
-
-  @override
-  State<_NowPlayingInfo> createState() => __NowPlayingInfoState();
-}
-
-class __NowPlayingInfoState extends State<_NowPlayingInfo> {
-  final playbackService = PlayService.instance.playbackService;
-  Future<ImageProvider<Object>?>? nowPlayingCover;
-
-  void updateCover() {
-    setState(() {
-      nowPlayingCover = playbackService.nowPlaying?.largeCover;
-    });
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    playbackService.addListener(updateCover);
-    nowPlayingCover = playbackService.nowPlaying?.largeCover;
-  }
-
+class _NowPlayingSpectrum extends StatelessWidget {
+  const _NowPlayingSpectrum({required this.playing, this.ring = false});
+  final bool playing, ring;
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final nowPlaying = playbackService.nowPlaying;
-
-    final placeholder = FittedBox(
-      child: Icon(
-        Symbols.broken_image,
-        size: 400.0,
-        color: scheme.onSecondaryContainer,
-      ),
-    );
-
-    const loadingWidget = Center(
-      child: SizedBox(
-        width: 24,
-        height: 24,
-        child: CircularProgressIndicator(),
-      ),
-    );
-
-    return Center(
-      child: SizedBox(
-        width: 400.0,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              nowPlaying == null ? "Coriander Music" : nowPlaying.title,
-              maxLines: 1,
-              style: TextStyle(
-                color: scheme.onSecondaryContainer,
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
-              ),
-            ),
-            Text(
-              nowPlaying == null
-                  ? "Enjoy Music"
-                  : "${nowPlaying.artist} - ${nowPlaying.album}",
-              maxLines: 1,
-              style: TextStyle(color: scheme.onSecondaryContainer),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: Center(
-                child: RepaintBoundary(
-                  child: nowPlayingCover == null
-                      ? placeholder
-                      : FutureBuilder(
-                          future: nowPlayingCover,
-                          builder: (context, snapshot) =>
-                              switch (snapshot.connectionState) {
-                            ConnectionState.done => snapshot.data == null
-                                ? placeholder
-                                : FittedBox(
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8.0),
-                                      child: Image(
-                                        image: snapshot.data!,
-                                        width: 400.0,
-                                        height: 400.0,
-                                        errorBuilder: (_, __, ___) =>
-                                            placeholder,
-                                      ),
-                                    ),
-                                  ),
-                            _ => loadingWidget,
-                          },
-                        ),
-                ),
-              ),
-            )
-          ],
-        ),
-      ),
-    );
+    final preferences = AppearanceScope.of(context);
+    final playback = PlayService.instance.playbackService;
+    return AudioSpectrum(
+        readSpectrum: playback.readSpectrum,
+        playing: playing,
+        trackKey: playback.nowPlaying?.path,
+        ring: ring,
+        animate: allowVisualMotion(context, preferences),
+        gentle: preferences.motion == MotionLevel.gentle);
   }
+}
 
+class _NowPlayingInfo extends StatelessWidget {
+  const _NowPlayingInfo();
   @override
-  void dispose() {
-    playbackService.removeListener(updateCover);
-    super.dispose();
+  Widget build(BuildContext context) {
+    final playback = context.watch<PlaybackService>();
+    final nowPlaying = playback.nowPlaying;
+    final preferences = AppearanceScope.of(context);
+    final artwork = context.dependOnInheritedWidgetOfExactType<_ArtworkData>()!;
+    final animate = allowVisualMotion(context, preferences);
+    final vinyl = preferences.artwork == ArtworkStyle.vinyl;
+    final placeholder = ColoredBox(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: const Center(child: Icon(Icons.music_note_rounded, size: 64)));
+    return Center(
+        child: SizedBox(
+            width: 440,
+            child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Column(children: [
+                  Expanded(
+                      child: PlayerArtworkHero(
+                          cover: artwork.cover,
+                          child: AnimatedSwitcher(
+                              duration:
+                                  animate ? AppMotion.artwork : Duration.zero,
+                              child: StreamBuilder(
+                                  stream: playback.playerStateStream,
+                                  initialData: playback.playerState,
+                                  key: ValueKey(
+                                      '${artwork.trackKey}-${preferences.artwork.name}'),
+                                  builder: (context, snapshot) {
+                                    final playing =
+                                        snapshot.data == PlayerState.playing;
+                                    final ring = preferences.spectrum ==
+                                        SpectrumStyle.ring;
+                                    Widget image = vinyl
+                                        ? VinylArtwork(
+                                            cover: artwork.cover,
+                                            playing: playing,
+                                            animate: animate,
+                                            secondsPerTurn:
+                                                preferences.rotationSeconds)
+                                        : Center(
+                                            child: AspectRatio(
+                                                aspectRatio: 1,
+                                                child: RepaintBoundary(
+                                                    child: ClipRRect(
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                                16),
+                                                        child: artwork.cover ==
+                                                                null
+                                                            ? placeholder
+                                                            : Image(
+                                                                image: artwork
+                                                                    .cover!,
+                                                                fit: BoxFit
+                                                                    .cover,
+                                                                errorBuilder: (_,
+                                                                        __,
+                                                                        ___) =>
+                                                                    placeholder)))));
+                                    if (ring) {
+                                      image = LayoutBuilder(
+                                          builder: (context, constraints) =>
+                                              Center(
+                                                  child: AspectRatio(
+                                                      aspectRatio: 1,
+                                                      child: Stack(
+                                                          fit: StackFit.expand,
+                                                          children: [
+                                                            Padding(
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .all(
+                                                                        18),
+                                                                child: vinyl
+                                                                    ? VinylArtwork(
+                                                                        cover: artwork
+                                                                            .cover,
+                                                                        playing:
+                                                                            playing,
+                                                                        animate:
+                                                                            animate,
+                                                                        secondsPerTurn:
+                                                                            preferences
+                                                                                .rotationSeconds)
+                                                                    : ClipOval(
+                                                                        child: artwork.cover ==
+                                                                                null
+                                                                            ? placeholder
+                                                                            : Image(
+                                                                                image: artwork.cover!,
+                                                                                fit: BoxFit.cover,
+                                                                                errorBuilder: (_, __, ___) => placeholder))),
+                                                            _NowPlayingSpectrum(
+                                                                playing:
+                                                                    playing,
+                                                                ring: true),
+                                                          ]))));
+                                    }
+                                    return image;
+                                  })))),
+                  const SizedBox(height: 16),
+                  Text(nowPlaying?.title ?? 'Coriander Music',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 24)),
+                  const SizedBox(height: 6),
+                  Text(
+                      nowPlaying == null
+                          ? 'Enjoy Music'
+                          : '${nowPlaying.artist} · ${nowPlaying.album}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center),
+                  const SizedBox(height: 8),
+                ]))));
   }
 }

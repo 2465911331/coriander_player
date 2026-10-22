@@ -1,6 +1,12 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
 project(coriander_player LANGUAGES CXX)
+enable_language(C)
+add_library(coriander_loudness SHARED
+  "../third_party/libebur128/ebur128.c")
+target_include_directories(coriander_loudness PRIVATE "../third_party/libebur128/queue")
+target_compile_definitions(coriander_loudness PRIVATE _USE_MATH_DEFINES)
+set_target_properties(coriander_loudness PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
@@ -74,6 +80,13 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
+install(TARGETS coriander_loudness RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bassmix/bassmix.dll"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/BASS" COMPONENT Runtime)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bassmix/bassmix.txt"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libebur128/LICENSE"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/third_party_licenses" COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)

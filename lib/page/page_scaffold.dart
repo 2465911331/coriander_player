@@ -26,12 +26,15 @@ class PageScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return ResponsiveBuilder(builder: (context, screenType) {
+    return LayoutBuilder(builder: (context, bounds) {
+      final screenType =
+          bounds.maxWidth < 700 ? ScreenType.small : ScreenType.large;
       List<Widget> rowChildren;
 
       if (actions.isEmpty) {
-        rowChildren =
-            subtitle == null ? [onlyTitle(scheme)] : [withSubtitle(scheme)];
+        rowChildren = subtitle == null
+            ? [onlyTitle(context, scheme)]
+            : [withSubtitle(context, scheme)];
       } else {
         switch (screenType) {
           case ScreenType.small:
@@ -69,7 +72,9 @@ class PageScaffold extends StatelessWidget {
               );
 
               rowChildren = [
-                subtitle == null ? onlyTitle(scheme) : withSubtitle(scheme),
+                subtitle == null
+                    ? onlyTitle(context, scheme)
+                    : withSubtitle(context, scheme),
                 const SizedBox(width: 16.0),
                 actions.first,
                 if (foldedColumn.isNotEmpty)
@@ -96,7 +101,9 @@ class PageScaffold extends StatelessWidget {
           case ScreenType.large:
             {
               rowChildren = [
-                subtitle == null ? onlyTitle(scheme) : withSubtitle(scheme),
+                subtitle == null
+                    ? onlyTitle(context, scheme)
+                    : withSubtitle(context, scheme),
                 const SizedBox(width: 16.0),
                 Wrap(spacing: 8.0, children: actions)
               ];
@@ -129,29 +136,32 @@ class PageScaffold extends StatelessWidget {
     });
   }
 
-  Expanded onlyTitle(ColorScheme scheme) {
+  Expanded onlyTitle(BuildContext context, ColorScheme scheme) {
     return Expanded(
       child: Text(
         title,
-        style: TextStyle(fontSize: 32.0, color: scheme.onSurface),
+        style: Theme.of(context).textTheme.headlineLarge,
         overflow: TextOverflow.ellipsis,
       ),
     );
   }
 
-  Expanded withSubtitle(ColorScheme scheme) {
+  Expanded withSubtitle(BuildContext context, ColorScheme scheme) {
     return Expanded(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: TextStyle(fontSize: 28.0, color: scheme.onSurface),
+            style: Theme.of(context).textTheme.headlineLarge,
             overflow: TextOverflow.ellipsis,
           ),
           Text(
             subtitle!,
-            style: TextStyle(fontSize: 14.0, color: scheme.onSurface),
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: scheme.onSurfaceVariant),
             overflow: TextOverflow.ellipsis,
           )
         ],

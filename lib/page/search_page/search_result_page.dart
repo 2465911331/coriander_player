@@ -1,3 +1,4 @@
+import 'package:coriander_player/component/library_search_box.dart';
 import 'package:coriander_player/component/album_tile.dart';
 import 'package:coriander_player/component/artist_tile.dart';
 import 'package:coriander_player/component/audio_tile.dart';
@@ -19,9 +20,6 @@ class SearchResultPage extends StatefulWidget {
 
 class _SearchResultPageState extends State<SearchResultPage> {
   late final searchResult = ValueNotifier(widget.searchResult);
-  late final searchBarController = TextEditingController(
-    text: widget.searchResult.query,
-  );
 
   List<_SearchResultPageBody> buildContent(UnionSearchResult result) {
     return [
@@ -30,6 +28,12 @@ class _SearchResultPageState extends State<SearchResultPage> {
       _SearchResultPageBody(result: result, filter: _SearchResultFilter.artist),
       _SearchResultPageBody(result: result, filter: _SearchResultFilter.album),
     ];
+  }
+
+  @override
+  void dispose() {
+    searchResult.dispose();
+    super.dispose();
   }
 
   @override
@@ -43,28 +47,11 @@ class _SearchResultPageState extends State<SearchResultPage> {
           length: 4,
           child: Column(
             children: [
-              Focus(
-                onFocusChange: HotkeysHelper.onFocusChanges,
-                child: Hero(
-                  tag: SEARCH_BAR_KEY,
-                  child: TextField(
-                    controller: searchBarController,
-                    decoration: const InputDecoration(
-                      suffixIcon: Padding(
-                        padding: EdgeInsets.only(right: 12.0),
-                        child: Icon(Symbols.search),
-                      ),
-                      hintText: "搜索歌曲、艺术家、专辑",
-                      border: OutlineInputBorder(),
-                    ),
-
-                    /// when 'enter' is pressed
-                    onSubmitted: (String query) {
-                      searchResult.value = UnionSearchResult.search(query);
-                    },
-                  ),
-                ),
-              ),
+              LibrarySearchBox(
+                  initialQuery: searchResult.value.query,
+                  onFocusChanged: HotkeysHelper.onFocusChanges,
+                  onSubmitted: (query) =>
+                      searchResult.value = UnionSearchResult.search(query)),
               const SizedBox(height: 8.0),
               Material(
                 type: MaterialType.transparency,
@@ -198,7 +185,20 @@ class _SearchResultPageBody extends StatelessWidget {
         slivers.addAll(buildAlbumResultContent(scheme));
         break;
     }
-    slivers.add(const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)));
+    slivers.add(const SliverPadding(padding: EdgeInsets.only(bottom: 16.0)));
+    final empty = switch (filter) {
+      _SearchResultFilter.all =>
+        result.audios.isEmpty && result.artists.isEmpty && result.album.isEmpty,
+      _SearchResultFilter.music => result.audios.isEmpty,
+      _SearchResultFilter.artist => result.artists.isEmpty,
+      _SearchResultFilter.album => result.album.isEmpty,
+    };
+    if (empty) {
+      return Center(
+          child: Text(result.query.trim().isEmpty
+              ? '输入关键词开始搜索'
+              : '没有找到匹配的${filter == _SearchResultFilter.all ? '内容' : filter.name}'));
+    }
     return CustomScrollView(slivers: slivers);
   }
 }

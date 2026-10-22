@@ -1,12 +1,12 @@
-import 'dart:async';
-import 'dart:math';
+import 'package:coriander_player/appearance.dart';
+import 'package:coriander_player/component/lyric_visuals.dart';
+import 'package:coriander_player/src/bass/bass_player.dart';
 
 import 'package:coriander_player/lyric/lrc.dart';
 import 'package:coriander_player/lyric/lyric.dart';
 import 'package:coriander_player/page/now_playing_page/component/lyric_view_controls.dart';
 import 'package:coriander_player/play_service/play_service.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
 class LyricViewTile extends StatelessWidget {
@@ -20,29 +20,30 @@ class LyricViewTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lyricViewController = context.watch<LyricViewController>();
+    final preferences = AppearanceScope.of(context);
+    final alignment = switch (lyricViewController.lyricTextAlign) {
+      LyricTextAlign.left => Alignment.centerLeft,
+      LyricTextAlign.center => Alignment.center,
+      LyricTextAlign.right => Alignment.centerRight,
+    };
     return Align(
-      alignment: switch (lyricViewController.lyricTextAlign) {
-        LyricTextAlign.left => Alignment.centerLeft,
-        LyricTextAlign.center => Alignment.center,
-        LyricTextAlign.right => Alignment.centerRight,
-      },
-      child: Opacity(
-        opacity: opacity,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12.0),
-          child: line is SyncLyricLine
-              ? _SyncLineContent(
-                  syncLine: line as SyncLyricLine,
-                  isMainLine: opacity == 1.0,
-                )
-              : _LrcLineContent(
-                  lrcLine: line as LrcLine,
-                  isMainLine: opacity == 1.0,
-                ),
-        ),
-      ),
-    );
+        alignment: alignment,
+        child: LyricLinePresentation(
+            active: opacity == 1,
+            inactiveOpacity: preferences.inactiveLyricOpacity,
+            animate: allowVisualMotion(context, preferences),
+            focus: preferences.lyricFocus,
+            gentle: preferences.motion == MotionLevel.gentle,
+            alignment: alignment,
+            child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(12),
+                child: line is SyncLyricLine
+                    ? _SyncLineContent(
+                        syncLine: line as SyncLyricLine,
+                        isMainLine: opacity == 1)
+                    : _LrcLineContent(
+                        lrcLine: line as LrcLine, isMainLine: opacity == 1))));
   }
 }
 
@@ -75,7 +76,8 @@ class _SyncLineContent extends StatelessWidget {
       }
 
       final List<Text> contents = [
-        buildPrimaryText(syncLine.content, scheme, alignment, lyricFontSize),
+        buildPrimaryText(
+            context, syncLine.content, scheme, alignment, lyricFontSize),
       ];
       if (syncLine.translation != null) {
         contents.add(buildSecondaryText(
@@ -87,7 +89,9 @@ class _SyncLineContent extends StatelessWidget {
       }
 
       return Padding(
-        padding: const EdgeInsets.all(12.0),
+        padding: EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: AppearanceScope.of(context).lyricLineSpacing),
         child: Column(
           crossAxisAlignment: switch (alignment) {
             LyricTextAlign.left => CrossAxisAlignment.start,
@@ -102,6 +106,7 @@ class _SyncLineContent extends StatelessWidget {
     final List<Widget> contents = [
       StreamBuilder(
         stream: PlayService.instance.playbackService.positionStream,
+        initialData: PlayService.instance.playbackService.position,
         builder: (context, snapshot) {
           final posInMs = (snapshot.data ?? 0) * 1000;
           return RichText(
@@ -114,14 +119,10 @@ class _SyncLineContent extends StatelessWidget {
               children: List.generate(
                 syncLine.words.length,
                 (i) {
-                  final posFromWordStart = max(
-                    posInMs - syncLine.words[i].start.inMilliseconds,
-                    0,
-                  );
-                  final progress = min(
-                    posFromWordStart / syncLine.words[i].length.inMilliseconds,
-                    1.0,
-                  );
+                  final progress = lyricWordProgress(
+                      posInMs,
+                      syncLine.words[i].start.inMilliseconds,
+                      syncLine.words[i].length.inMilliseconds);
                   return WidgetSpan(
                     child: ShaderMask(
                       blendMode: BlendMode.dstIn,
@@ -142,6 +143,14 @@ class _SyncLineContent extends StatelessWidget {
                           color: scheme.primary,
                           fontSize: lyricFontSize,
                           fontWeight: FontWeight.bold,
+                          shadows: AppearanceScope.of(context).lyricGlow
+                              ? [
+                                  Shadow(
+                                      color:
+                                          scheme.primary.withValues(alpha: .3),
+                                      blurRadius: 12)
+                                ]
+                              : null,
                         ),
                       ),
                     ),
@@ -162,7 +171,9 @@ class _SyncLineContent extends StatelessWidget {
       ));
     }
     return Padding(
-      padding: const EdgeInsets.all(12.0),
+      padding: EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: AppearanceScope.of(context).lyricLineSpacing),
       child: Column(
         crossAxisAlignment: switch (alignment) {
           LyricTextAlign.left => CrossAxisAlignment.start,
@@ -175,6 +186,7 @@ class _SyncLineContent extends StatelessWidget {
   }
 
   Text buildPrimaryText(
+    BuildContext context,
     String text,
     ColorScheme scheme,
     LyricTextAlign align,
@@ -188,9 +200,15 @@ class _SyncLineContent extends StatelessWidget {
         LyricTextAlign.right => TextAlign.right,
       },
       style: TextStyle(
-        color: scheme.onSecondaryContainer,
+        color: isMainLine ? scheme.primary : scheme.onSecondaryContainer,
         fontSize: fontSize,
         fontWeight: FontWeight.bold,
+        shadows: isMainLine && AppearanceScope.of(context).lyricGlow
+            ? [
+                Shadow(
+                    color: scheme.primary.withValues(alpha: .3), blurRadius: 12)
+              ]
+            : null,
       ),
     );
   }
@@ -238,7 +256,8 @@ class _LrcLineContent extends StatelessWidget {
 
     final splited = lrcLine.content.split("┃");
     final List<Text> contents = [
-      buildPrimaryText(splited.first, scheme, alignment, lyricFontSize),
+      buildPrimaryText(
+          context, splited.first, scheme, alignment, lyricFontSize),
     ];
     for (var i = 1; i < splited.length; i++) {
       contents.add(buildSecondaryText(
@@ -250,7 +269,9 @@ class _LrcLineContent extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.all(12.0),
+      padding: EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: AppearanceScope.of(context).lyricLineSpacing),
       child: Column(
         crossAxisAlignment: switch (alignment) {
           LyricTextAlign.left => CrossAxisAlignment.start,
@@ -263,6 +284,7 @@ class _LrcLineContent extends StatelessWidget {
   }
 
   Text buildPrimaryText(
+    BuildContext context,
     String text,
     ColorScheme scheme,
     LyricTextAlign align,
@@ -276,9 +298,15 @@ class _LrcLineContent extends StatelessWidget {
         LyricTextAlign.right => TextAlign.right,
       },
       style: TextStyle(
-        color: scheme.onSecondaryContainer,
+        color: isMainLine ? scheme.primary : scheme.onSecondaryContainer,
         fontSize: fontSize,
         fontWeight: FontWeight.bold,
+        shadows: isMainLine && AppearanceScope.of(context).lyricGlow
+            ? [
+                Shadow(
+                    color: scheme.primary.withValues(alpha: .3), blurRadius: 12)
+              ]
+            : null,
       ),
     );
   }
@@ -307,121 +335,22 @@ class LyricTransitionTile extends StatelessWidget {
   final LrcLine? lrcLine;
   final SyncLyricLine? syncLine;
   const LyricTransitionTile({super.key, this.lrcLine, this.syncLine});
-
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return SizedBox(
-      height: 40.0,
-      width: 80.0,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 18, 12, 6),
-        child: CustomPaint(
-          painter: LyricTransitionPainter(
-            scheme,
-            LyricTransitionTileController(lrcLine, syncLine),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class LyricTransitionPainter extends CustomPainter {
-  final ColorScheme scheme;
-  final LyricTransitionTileController controller;
-
-  final Paint circlePaint1 = Paint();
-  final Paint circlePaint2 = Paint();
-  final Paint circlePaint3 = Paint();
-
-  final double radius = 6;
-
-  LyricTransitionPainter(this.scheme, this.controller)
-      : super(repaint: controller);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    circlePaint1.color = scheme.onSecondaryContainer.withOpacity(
-      0.05 + min(controller.progress * 3, 1) * 0.95,
-    );
-    circlePaint2.color = scheme.onSecondaryContainer.withOpacity(
-      0.05 + min(max(controller.progress - 1 / 3, 0) * 3, 1) * 0.95,
-    );
-    circlePaint3.color = scheme.onSecondaryContainer.withOpacity(
-      0.05 + min(max(controller.progress - 2 / 3, 0) * 3, 1) * 0.95,
-    );
-
-    final rWithFactor = radius + controller.sizeFactor;
-    final c1 = Offset(rWithFactor, 8);
-    final c2 = Offset(4 * rWithFactor, 8);
-    final c3 = Offset(7 * rWithFactor, 8);
-
-    canvas.drawCircle(c1, rWithFactor, circlePaint1);
-    canvas.drawCircle(c2, rWithFactor, circlePaint2);
-    canvas.drawCircle(c3, rWithFactor, circlePaint3);
-  }
-
-  @override
-  bool shouldRepaint(LyricTransitionPainter oldDelegate) => false;
-
-  @override
-  bool shouldRebuildSemantics(LyricTransitionPainter oldDelegate) => false;
-}
-
-class LyricTransitionTileController extends ChangeNotifier {
-  final LrcLine? lrcLine;
-  final SyncLyricLine? syncLine;
-
-  final playbackService = PlayService.instance.playbackService;
-
-  double progress = 0;
-  late final StreamSubscription positionStreamSub;
-
-  double sizeFactor = 0;
-  double k = 1;
-  late final Ticker factorTicker;
-
-  LyricTransitionTileController([this.lrcLine, this.syncLine]) {
-    positionStreamSub = playbackService.positionStream.listen(_updateProgress);
-    factorTicker = Ticker((elapsed) {
-      sizeFactor += k * 1 / 180;
-      if (sizeFactor > 1) {
-        k = -1;
-        sizeFactor = 1;
-      } else if (sizeFactor < 0) {
-        k = 1;
-        sizeFactor = 0;
-      }
-      notifyListeners();
-    });
-    factorTicker.start();
-  }
-
-  void _updateProgress(double position) {
-    late int startInMs;
-    late int lengthInMs;
-    if (lrcLine != null) {
-      startInMs = lrcLine!.start.inMilliseconds;
-      lengthInMs = lrcLine!.length.inMilliseconds;
-    } else {
-      startInMs = syncLine!.start.inMilliseconds;
-      lengthInMs = syncLine!.length.inMilliseconds;
-    }
-    final sinceStart = position * 1000 - startInMs;
-    progress = max(sinceStart, 0) / lengthInMs;
-    notifyListeners();
-
-    if (progress >= 1) {
-      dispose();
-    }
-  }
-
-  @override
-  void dispose() {
-    positionStreamSub.cancel();
-    factorTicker.dispose();
-    super.dispose();
+    final playback = PlayService.instance.playbackService;
+    final preferences = AppearanceScope.of(context);
+    final start = lrcLine?.start ?? syncLine!.start;
+    final length = lrcLine?.length ?? syncLine!.length;
+    return StreamBuilder(
+        stream: playback.playerStateStream,
+        initialData: playback.playerState,
+        builder: (context, state) => StreamBuilder(
+            stream: playback.positionStream,
+            initialData: playback.position,
+            builder: (context, snapshot) => InterludeDots(
+                progress: lyricWordProgress((snapshot.data ?? 0) * 1000,
+                    start.inMilliseconds, length.inMilliseconds),
+                playing: state.data == PlayerState.playing,
+                animate: allowVisualMotion(context, preferences))));
   }
 }

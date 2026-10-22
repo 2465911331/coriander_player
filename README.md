@@ -1,123 +1,71 @@
-# Coriander Player：一款使用 Material You 配色的本地音乐播放器。
-![音乐页](软件截图/音乐页.png)
+# Coriander Player 增强版
 
-## [更多软件截图在下面（点我滚动到下面）](#软件截图)
+基于 Material Design 3 的 Windows 本地音乐播放器。
 
-**该播放器发行版已经附带桌面歌词组件。项目仓库请见 [desktop_lyric](https://github.com/Ferry-200/desktop_lyric.git)**
+**源项目：[@Ferry-200/coriander_player](https://github.com/Ferry-200/coriander_player)，原作者：@Ferry-200。**
 
-## 安装
-1. 下载 [Release](https://github.com/Ferry-200/coriander_player/releases/latest) 里文件安装
-2. **（已过时，现在的体验版已经落后于正式版）** 你也可以到 [Action 构建版本（体验版）介绍](https://github.com/Ferry-200/coriander_player/issues/49) 下载体验版 :)
-3. 通过 scoop 安装，使用此 [bucket](https://github.com/jinzhongjia/scoop-bucket)
-```sh
-# 添加 bucket
-scoop bucket add jin https://github.com/jinzhongjia/scoop-bucket
-# 安装
-scoop install jin/coriander_player
+本仓库是由 @2465911331 维护的非官方增强分支，保留原项目的版权与 GPL-3.0 许可证。感谢原作者及所有上游贡献者；本分支的新增功能与问题请在本仓库讨论。
+
+## 下载与安装
+
+- **[下载 1.5.7 EXE 安装包](https://github.com/2465911331/coriander_player/releases/download/v1.5.7/CorianderPlayer-Setup-1.5.7.exe)**
+- [查看全部发行版本](https://github.com/2465911331/coriander_player/releases)
+- Windows 10/11，64 位。
+- 支持覆盖安装，无需先卸载；沿用原安装目录并保留音乐库、歌单、设置及播放记录。安装器会先请求目标目录中的旧播放器正常退出。
+
+安装包 SHA256：
+
+```text
+9c7bd9b2a2f727984c4beb6e5036e015ada47a29d95bef1ab143d87cb0288e82
 ```
 
-## 其他平台支持
-- MacOS: [https://github.com/marscey/coriander_player/tree/macos-platform](https://github.com/marscey/coriander_player/tree/macos-platform)
-- Linux: [https://github.com/Sh12uku/coriander_player_linux]()
+![1.5.7 音乐库与播放队列](docs/images/v1.5.7-library.png)
 
-## 软件内快捷键
-页面中有文本框且处于输入状态时会自动忽略快捷键操作。如果要使用快捷键，可以点击输入框以外的地方，然后再次使用。
-- Esc：返回上一级
-- 空格：暂停/播放
-- Ctrl + 左方向键：上一曲
-- Ctrl + 右方向键：下一曲 
+## 1.5.7 更新
 
-## 支持播放的音乐格式
-- mp3, mp2, mp1
-- ogg
-- wav, wave
-- aif, aiff, aifc
-- asf, wma
-- aac, adts
-- m4a
-- ac3
-- amr, 3ga
-- flac
-- mpc
-- mid
-- wv, wvc
-- opus
-- dsf, dff
-- ape
+- 独立底部播放区，不遮挡内容；加入上一首、下一首和队列入口。
+- 统一 Material Design 3 的主题表面、文字层级、圆角、播放/暂停与键盘焦点提示。
+- 列表/卡片分段切换、排序选中提示；歌曲行高适应文字放大。
+- 搜索歌曲、艺术家、专辑的即时建议及完整分类结果；支持 Ctrl+F。
+- 设置分为播放与窗口、声音、音乐库、外观与动效、关于五组。
+- 删除歌单后 6 秒内可撤销，原音乐文件不会被删除。
+- 底部封面与播放页共享过渡；宽屏播放队列侧栏和窄窗口弹出队列。
+- 修复 Esc 重复返回与播放快捷键重复注册。
 
-## 支持下列音乐格式的内嵌歌词
-- aac
-- aiff
-- flac
-- m4a
-- mp3
-- ogg
-- opus
-- wav（标签必须用 UTF-8 编码）
+详见 [更新说明](CHANGELOG.md) 与 [界面实现说明](docs/material-design-3-implementation.md)。
 
-其他格式的只支持同目录的 lrc 文件或者是网络歌词
+## 本分支已加入的功能
 
-## 外挂 LRC 支持编码
-- utf-8
-- utf-16
+- 关闭行为设置：隐藏到托盘、直接退出或每次询问；托盘显示主界面与退出。
+- 恢复上次歌曲、队列、播放进度和随机状态，启动后保持暂停。
+- 文件夹刷新、无缝播放、歌曲音量统一及智能歌单。
+- 波浪进度条、整曲波形、黑胶唱片、频谱、封面背景及歌词美化。
+- 音乐库卡片、封面占位、悬停快捷播放与减少动画设置。
 
-## 选择默认歌词
-默认情况下，软件会先读取本地歌词。如果没有，则匹配在线歌词。
-你可以在正在播放界面的歌词切换按钮展开的菜单中进入选择默认歌词的页面。
+## 快捷键
 
-![音乐页](软件截图/选择默认歌词.png)
-在这个界面中，你可以在本地歌词（如果有）和几个匹配程度高的在线歌词中选择一个作为默认歌词。之后再播放这首音乐时，软件会加载你指定的歌词。
+| 操作 | 快捷键 |
+| --- | --- |
+| 搜索/聚焦搜索 | Ctrl + F |
+| 播放/暂停 | 空格 |
+| 上一首 / 下一首 | Ctrl + 左 / 右方向键 |
+| 关闭面板或返回 | Esc |
 
-## 提供建议、提交 Bug 或者提 PR
-我正处于学习和适应 Github 工作流的阶段，所以目前不设置太多的要求。你只需要注意以下几点： 
-1. 如果要提交 Bug，请创建一个新的 issue。尽可能说明复现步骤并提供截图。
-2. 如果你提交 PR，由于我正在学习相关知识，可能会在处理 PR 时和你沟通如何操作分支之类的问题。
+输入文字时暂停全局播放快捷键，避免误操作。
 
-## 编译
-1. 开发 flutter 需要的环境
-2. 需要编译 Coriander Player（本仓库） 软件本体和 desktop_lyric。[desktop_lyric](https://github.com/Ferry-200/desktop_lyric.git) 也是 Flutter 应用，直接编译即可
-3. 要把得到的 desktop_lyric 产物放在软件目录的 `desktop_lyric/` 目录下
-4. 编译后要把 BASS 库的 64 位的 `bass.dll`, `bassape.dll`, `bassdsd.dll`, `bassflac.dll`, `bassmidi.dll`, `bassopus.dll`, `basswv.dll`, `basswasapi.dll` 放在软件目录的 `BASS` 文件夹下
+## 开发与验证
 
-## 歌词特性解释
-1. lrc歌词的间奏识别   
-   在一些lrc歌词中，会使用 **只有时间标签而内容为空** 的一行来表示上一行的结束。如：
-   ```
-   [02:32.57]光は やさしく抱きしめた
-   [02:32.57]那天没能放声大哭的我
-   [02:39.94]
-   [02:55.18]照らされた世界 咲き誇る大切な人
-   [02:55.18]光芒普照整个世界 珍重之人绽放于心
-   ```
-   如果这一行（第三行）的时间戳和下一行的时间戳之间大于5s，就把这两行之间的时间作为间奏时长  
-   **所以，不是所有lrc歌词在间奏时都能显示间奏动画。**
-2. 逐字歌词的间奏识别  
-   逐字歌词都会给出每一行的开始时间和持续时间，所以识别间奏会简单得多。如
-   ```
-   [5905,5466]<0,217,0>世<217,383,0>界<600,495,0>は<1095,272,0>と<1367,328,0>て<1695,343,0>も<2038,616,0>綺<2654,752,0>麗<3406,276,0>だ<3682,276,0>っ<3958,504,0>た<4462,1004,0>な
-   [23037,5254]<0,255,0>書<255,280,0>架<535,312,0>の<847,592,0>隙<1439,312,0>間<1751,223,0>に<1974,160,0>住<2134,144,0>ま<2278,352,0>う<2630,640,0>一<3270,640,0>輪<3910,190,0>の<4100,680,0>花<4780,474,0>は
-   ```
-   第一行的开始时间是 5905ms，持续 5466ms；第二行则是 23037ms和 5254ms。可见 5905 + 5466 = 11371，与 23037相差超过 5000ms，所以这两行时间可以插入表示间奏的空白行
+源代码与该版本安装包一起公开。[编译说明](docs/build-windows.md) 包含 Flutter、Rust、原生库与安装器准备方式；[打包说明](packaging/README.md) 保留本版使用的稳定安装标识和覆盖升级逻辑。
 
-## 感谢
-- [music_api](https://github.com/yhsj0919/music_api.git)：实现歌曲的匹配和歌词的获取
-- [Lofty](https://crates.io/crates/lofty)：歌曲标签获取
-- [BASS](https://www.un4seen.com/bass.html)：播放乐曲
-- [flutter_rust_bridge](https://pub.dev/packages/flutter_rust_bridge)：实现许多 Windows 原生交互
-- [Silicon7921](https://github.com/Silicon7921)：绘制了新图标
+本版 107 项自动测试通过；静态检查无错误、无警告。已在隔离目录实测 1.5.6 → 1.5.7 覆盖升级及数据保留。
 
-## 软件截图
-![音乐页](软件截图/音乐页.png)
-![艺术家页](软件截图/艺术家页.png)
-![艺术家详情页](软件截图/艺术家详情页.png)
-![专辑详情页](软件截图/专辑详情页.png)
-![主题选择器](软件截图/主题选择器.png)
-![夜间模式](软件截图/夜间模式.png)
-![正在播放：LRC歌词](软件截图/正在播放（LRC歌词）.png)
-![正在播放：逐字歌词](软件截图/正在播放（逐字歌词）.png)
-![正在播放：间奏动画](软件截图/正在播放（间奏动画）.png)
-![正在播放：居中对齐](软件截图/正在播放（居中对齐）.png)
-![桌面歌词](软件截图/桌面歌词.png)
-![桌面歌词：操作栏](软件截图/桌面歌词（操作栏）.png)
-![桌面歌词：个性化设置](软件截图/桌面歌词（个性化设置）.png)
-![桌面歌词：夜间模式](软件截图/桌面歌词（夜间模式）.png)
+当前安装版的“检查更新”仍查询上游发行信息。本分支的新版本请以[本仓库 Releases](https://github.com/2465911331/coriander_player/releases)为准；问题反馈请使用[本仓库 Issues](https://github.com/2465911331/coriander_player/issues)。
+
+## 致谢与许可
+
+- 原项目与作者：[@Ferry-200/coriander_player](https://github.com/Ferry-200/coriander_player) / @Ferry-200。
+- 桌面歌词组件：[Ferry-200/desktop_lyric](https://github.com/Ferry-200/desktop_lyric)。
+- 音乐匹配与歌词：[yhsj0919/music_api](https://github.com/yhsj0919/music_api)。
+- 保留上游使用的 BASS、Lofty、flutter_rust_bridge 及图标作者 Silicon7921 等贡献者的署名。
+- 本项目沿用 [GPL-3.0](LICENSE)，第三方组件保留各自的许可证和声明。
+- [上游原版 README](docs/upstream-readme.md) 保留原项目的格式支持、歌词特性和历史说明。

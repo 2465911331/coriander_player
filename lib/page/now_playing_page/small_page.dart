@@ -74,7 +74,9 @@ class _NowPlayingPage_SmallState extends State<_NowPlayingPage_Small> {
                 ),
                 Expanded(
                   child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 150),
+                    layoutBuilder: (current, previous) =>
+                        current ?? const SizedBox.shrink(),
+                    duration: AppMotion.duration(context),
                     child: switch (views[1]) {
                       NowPlayingViewMode.onlyMain => const _NowPlayingInfo(),
                       NowPlayingViewMode.withLyric => const VerticalLyricView(),

@@ -3,9 +3,15 @@ import 'package:coriander_player/play_service/lyric_service.dart';
 import 'package:coriander_player/play_service/playback_service.dart';
 
 class PlayService {
-  late final playbackService = PlaybackService(this);
-  late final lyricService = LyricService(this);
-  late final desktopLyricService = DesktopLyricService(this);
+  PlaybackService? _playbackService;
+  LyricService? _lyricService;
+  DesktopLyricService? _desktopLyricService;
+
+  PlaybackService get playbackService =>
+      _playbackService ??= PlaybackService(this);
+  LyricService get lyricService => _lyricService ??= LyricService(this);
+  DesktopLyricService get desktopLyricService =>
+      _desktopLyricService ??= DesktopLyricService(this);
 
   PlayService._();
 
@@ -15,8 +21,13 @@ class PlayService {
     return _instance!;
   }
 
-  void close() {
-    desktopLyricService.killDesktopLyric();
-    playbackService.close();
+  Future<void> close() async {
+    await _desktopLyricService?.killDesktopLyric();
+    _lyricService?.dispose();
+    await _playbackService?.close();
   }
+
+  static Future<void> closeIfInitialized() async => _instance?.close();
+  static Future<void> savePlaybackIfInitialized() async =>
+      _instance?._playbackService?.saveSession();
 }

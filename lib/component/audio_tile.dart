@@ -1,4 +1,6 @@
-import 'package:coriander_player/component/scroll_aware_future_builder.dart';
+import 'package:coriander_player/component/song_list_item.dart';
+import 'package:coriander_player/component/library_card.dart';
+import 'package:coriander_player/src/bass/bass_player.dart';
 import 'package:coriander_player/utils.dart';
 import 'package:coriander_player/library/audio_library.dart';
 import 'package:coriander_player/page/uni_page.dart';
@@ -32,7 +34,6 @@ class AudioTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final audio = playlist[audioIndex];
 
     return MenuAnchor(
@@ -94,20 +95,24 @@ class AudioTile extends StatelessWidget {
           menuChildren: List.generate(
             PLAYLISTS.length,
             (i) => MenuItemButton(
-              onPressed: () {
-                final added = PLAYLISTS[i].audios.containsKey(audio.path);
-                if (added) {
-                  showTextOnSnackBar("歌曲“${audio.title}”已存在");
-                  return;
-                }
+              onPressed: PLAYLISTS[i].isSmart
+                  ? null
+                  : () {
+                      final added = PLAYLISTS[i].audios.containsKey(audio.path);
+                      if (added) {
+                        showTextOnSnackBar("歌曲“${audio.title}”已存在");
+                        return;
+                      }
 
-                PLAYLISTS[i].audios[audio.path] = audio;
-                showTextOnSnackBar(
-                  "成功将“${audio.title}”添加到歌单“${PLAYLISTS[i].name}”",
-                );
-              },
+                      PLAYLISTS[i].audios[audio.path] = audio;
+                      schedulePlaylistSave();
+                      showTextOnSnackBar(
+                        "成功将“${audio.title}”添加到歌单“${PLAYLISTS[i].name}”",
+                      );
+                    },
               leadingIcon: const Icon(Symbols.queue_music),
-              child: Text(PLAYLISTS[i].name),
+              child: Text(
+                  '${PLAYLISTS[i].name}${PLAYLISTS[i].isSmart ? '（自动匹配）' : ''}'),
             ),
           ),
           child: const Text("添加到歌单"),
@@ -123,117 +128,92 @@ class AudioTile extends StatelessWidget {
         ),
       ],
       builder: (context, controller, _) {
-        final textColor = focus ? scheme.primary : scheme.onSurface;
-        final placeholder = Icon(
-          Symbols.broken_image,
-          size: 48.0,
-          color: scheme.onSurface,
-        );
+        final playback = PlayService.instance.playbackService;
+        void activate() {
+          if (controller.isOpen) {
+            controller.close();
+            return;
+          }
+          if (multiSelectController?.enableMultiSelectView == true) {
+            if (multiSelectController!.selected.contains(audio)) {
+              multiSelectController!.unselect(audio);
+            } else {
+              multiSelectController!.select(audio);
+            }
+          } else {
+            playback.play(audioIndex, playlist);
+          }
+        }
 
-        return Ink(
-          height: 64.0,
-          decoration: BoxDecoration(
-            color: multiSelectController == null
-                ? Colors.transparent
-                : multiSelectController!.selected.contains(audio)
-                    ? scheme.secondaryContainer
-                    : Colors.transparent,
-            borderRadius: BorderRadius.circular(8.0),
-          ),
-          child: InkWell(
-            focusColor: Colors.transparent,
-            borderRadius: BorderRadius.circular(8.0),
-            onTap: () {
-              if (controller.isOpen) {
-                controller.close();
-                return;
-              }
+        void secondary(TapDownDetails details) {
+          if (multiSelectController?.enableMultiSelectView == true) return;
+          controller.open(position: details.localPosition);
+        }
 
-              if (multiSelectController == null ||
-                  !multiSelectController!.enableMultiSelectView) {
-                PlayService.instance.playbackService.play(audioIndex, playlist);
-              } else {
-                if (multiSelectController!.selected.contains(audio)) {
-                  multiSelectController!.unselect(audio);
-                } else {
-                  multiSelectController!.select(audio);
-                }
-              }
-            },
-            onSecondaryTapDown: (details) {
-              if (multiSelectController?.enableMultiSelectView == true) return;
-
-              controller.open(
-                  position: details.localPosition.translate(0, -240));
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Row(children: [
-                if (leading != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 16.0),
-                    child: leading!,
-                  ),
-
-                /// cover
-                ScrollAwareFutureBuilder(
-                  future: () => audio.cover,
-                  builder: (context, snapshot) {
-                    if (snapshot.data == null) {
-                      return placeholder;
-                    }
-
-                    return ClipRRect(
-                      borderRadius: BorderRadius.circular(8.0),
-                      child: Image(
-                        image: snapshot.data!,
-                        width: 48.0,
-                        height: 48.0,
-                        errorBuilder: (_, __, ___) => placeholder,
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(width: 16.0),
-
-                /// title, artist and album
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        audio.title,
-                        style: TextStyle(color: textColor, fontSize: 16),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(width: 4.0),
-                      Text(
-                        "${audio.artist} - ${audio.album}",
-                        style: TextStyle(color: textColor),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8.0),
-                Text(
-                  Duration(seconds: audio.duration).toStringHMMSS(),
-                  style: TextStyle(
-                    color: focus ? scheme.primary : scheme.onSurface,
-                  ),
-                ),
-                if (action != null)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8.0),
-                    child: action!,
-                  ),
-              ]),
-            ),
-          ),
-        );
+        return ListenableBuilder(
+            listenable: playback,
+            builder: (context, _) => StreamBuilder<PlayerState>(
+                stream: playback.playerStateStream,
+                initialData: playback.playerState,
+                builder: (context, snapshot) {
+                  final current = playback.nowPlaying?.path == audio.path;
+                  final playing =
+                      current && snapshot.data == PlayerState.playing;
+                  if (!LibraryViewScope.cardsOf(context)) {
+                    return SongListItem(
+                        title: audio.title,
+                        subtitle: '${audio.artist} · ${audio.album}',
+                        duration:
+                            Duration(seconds: audio.duration).toStringHMMSS(),
+                        artwork: LibraryArtwork(
+                            identity: audio,
+                            seed: audio.album,
+                            load: () => audio.cover),
+                        current: current,
+                        playing: playing,
+                        located: focus,
+                        leading: leading,
+                        action: action,
+                        selected:
+                            multiSelectController?.selected.contains(audio) ==
+                                true,
+                        selecting:
+                            multiSelectController?.enableMultiSelectView ==
+                                true,
+                        onTap: activate,
+                        onSecondaryTapDown: secondary);
+                  }
+                  return LibraryMediaCard(
+                      title: audio.title,
+                      subtitle:
+                          '${audio.artist} · ${Duration(seconds: audio.duration).toStringHMMSS()}',
+                      artwork: LibraryArtwork(
+                          identity: audio,
+                          seed: audio.album,
+                          load: () => audio.mediumCover),
+                      current: current,
+                      playing: playing,
+                      badge: current ? (playing ? '正在播放' : '已暂停') : null,
+                      selected:
+                          multiSelectController?.selected.contains(audio) ==
+                              true,
+                      selecting:
+                          multiSelectController?.enableMultiSelectView == true,
+                      onTap: activate,
+                      onSecondaryTapDown: secondary,
+                      onPlay: () {
+                        if (!current) {
+                          playback.play(audioIndex, playlist);
+                        } else if (playing) {
+                          playback.pause();
+                        } else if (playback.length > 0 &&
+                            playback.position >= playback.length - .01) {
+                          playback.playAgain();
+                        } else {
+                          playback.start();
+                        }
+                      });
+                }));
       },
     );
   }

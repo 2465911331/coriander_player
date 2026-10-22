@@ -1,5 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
+import 'package:coriander_player/appearance.dart';
+import 'package:coriander_player/storage/safe_json.dart';
+import 'package:coriander_player/window_behavior.dart';
+import 'package:coriander_player/play_service/loudness_model.dart';
 import 'package:coriander_player/src/rust/api/system_theme.dart';
 import 'package:coriander_player/utils.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +15,7 @@ import 'package:window_manager/window_manager.dart';
 /// 只在新 app data 目录没有数据时进行
 /// 从 C:\Users\$username\AppData\Roaming\com.example\coriander_player 移到 C:\Users\$username\Documents\coriander_player
 Future<void> migrateAppData() async {
+  if (Platform.environment.containsKey('CORIANDER_DATA_DIR')) return;
   try {
     final newAppDataDir = await getAppDataDir();
     if (newAppDataDir.listSync().isNotEmpty) return;
@@ -33,6 +37,10 @@ Future<void> migrateAppData() async {
 }
 
 Future<Directory> getAppDataDir() async {
+  final override = Platform.environment['CORIANDER_DATA_DIR'];
+  if (override != null && override.isNotEmpty && path.isAbsolute(override)) {
+    return Directory(override).create(recursive: true);
+  }
   final dir = await getApplicationDocumentsDirectory();
   return Directory(path.join(dir.path, "coriander_player"))
       .create(recursive: true);
@@ -40,7 +48,13 @@ Future<Directory> getAppDataDir() async {
 
 class AppSettings {
   static final github = GitHub();
-  static const String version = "1.5.1";
+  static const String version = "1.5.7";
+  final appearance = AppearancePreferences();
+  bool gaplessPlayback = true;
+  NormalizationMode normalizationMode = NormalizationMode.off;
+
+  bool rememberPlayback = true;
+  CloseBehavior closeBehavior = CloseBehavior.hideToTray;
 
   /// 主题模式：亮 / 暗
   ThemeMode themeMode = getWindowsThemeMode();
@@ -141,8 +155,14 @@ class AppSettings {
       final supportPath = (await getAppDataDir()).path;
       final settingsPath = "$supportPath\\settings.json";
 
-      final settingsStr = File(settingsPath).readAsStringSync();
-      Map settingsMap = json.decode(settingsStr);
+      final settingsMap = await readJsonSafely(settingsPath, {}) as Map;
+      _instance.appearance.read(settingsMap['Appearance']);
+      _instance.gaplessPlayback = settingsMap['GaplessPlayback'] != false;
+      _instance.normalizationMode =
+          NormalizationMode.fromJson(settingsMap['NormalizationMode']);
+      _instance.rememberPlayback = settingsMap['RememberPlayback'] != false;
+      _instance.closeBehavior =
+          CloseBehavior.fromJson(settingsMap['CloseBehavior']);
 
       if (settingsMap["Version"] == null) {
         return _readFromJson_old(settingsMap);
@@ -212,6 +232,11 @@ class AppSettings {
       final isFullScreen = await windowManager.isFullScreen();
       final settingsMap = {
         "Version": version,
+        "Appearance": appearance.toJson(),
+        'GaplessPlayback': gaplessPlayback,
+        'NormalizationMode': normalizationMode.name,
+        "RememberPlayback": rememberPlayback,
+        "CloseBehavior": closeBehavior.name,
         "ThemeMode": themeMode == ThemeMode.dark,
         "DynamicTheme": dynamicTheme,
         "UseSystemTheme": useSystemTheme,
@@ -233,11 +258,9 @@ class AppSettings {
       settingsMap["WindowSize"] =
           "${sizeToSave.width.toStringAsFixed(1)},${sizeToSave.height.toStringAsFixed(1)}";
 
-      final settingsStr = json.encode(settingsMap);
       final supportPath = (await getAppDataDir()).path;
       final settingsPath = "$supportPath\\settings.json";
-      final output = await File(settingsPath).create(recursive: true);
-      output.writeAsStringSync(settingsStr);
+      await writeJsonSafely(settingsPath, settingsMap);
     } catch (err, trace) {
       LOGGER.e(err, stackTrace: trace);
     }

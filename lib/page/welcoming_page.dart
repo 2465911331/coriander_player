@@ -255,7 +255,7 @@ class __WindowControllsState extends State<_WindowControlls>
           },
         ),
         IconButton(
-          tooltip: "退出",
+          tooltip: "关闭到系统托盘",
           onPressed: windowManager.close,
           icon: const Icon(Symbols.close),
         ),

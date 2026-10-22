@@ -1,9 +1,10 @@
 use std::time::Duration;
+use std::sync::Mutex;
 
 use flutter_rust_bridge::frb;
 use windows::{
     core::HSTRING,
-    Foundation::{TimeSpan, TypedEventHandler},
+    Foundation::{EventRegistrationToken, TimeSpan, TypedEventHandler},
     Media::{
         MediaPlaybackStatus, MediaPlaybackType, Playback::MediaPlayer,
         SystemMediaTransportControls, SystemMediaTransportControlsButton,
@@ -24,6 +25,7 @@ use super::{logger::log_to_dart, tag_reader};
 pub struct SMTCFlutter {
     _smtc: SystemMediaTransportControls,
     _player: MediaPlayer,
+    control_events: Mutex<Option<EventRegistrationToken>>,
 }
 
 pub enum SMTCControlEvent {
@@ -47,7 +49,11 @@ impl SMTCFlutter {
     }
 
     pub fn subscribe_to_control_events(&self, sink: StreamSink<SMTCControlEvent>) {
-        self._smtc
+        let mut registration = self.control_events.lock().unwrap();
+        if let Some(token) = registration.take() {
+            let _ = self._smtc.RemoveButtonPressed(token);
+        }
+        let token = self._smtc
             .ButtonPressed(&TypedEventHandler::<
                 SystemMediaTransportControls,
                 SystemMediaTransportControlsButtonPressedEventArgs,
@@ -60,11 +66,13 @@ impl SMTCFlutter {
                     SystemMediaTransportControlsButton::Previous => SMTCControlEvent::Previous,
                     _ => SMTCControlEvent::Unknown,
                 };
-                sink.add(event).unwrap();
+                // A button event may race with shutdown of the Dart receiver.
+                let _ = sink.add(event);
 
                 Ok(())
             }))
             .unwrap();
+        *registration = Some(token);
     }
 
     pub fn update_state(&self, state: SMTCState) {
@@ -100,6 +108,11 @@ impl SMTCFlutter {
     }
 
     pub fn close(self) {
+        // Dropping this handler releases the StreamSink and closes the Dart
+        // event stream. Dart must not await stream cancellation before this.
+        if let Some(token) = self.control_events.lock().unwrap().take() {
+            let _ = self._smtc.RemoveButtonPressed(token);
+        }
         self._player.Close().unwrap();
     }
 }
@@ -125,7 +138,7 @@ impl SMTCFlutter {
         let _smtc = _player.SystemMediaTransportControls()?;
         Self::_init_controls(&_smtc)?;
 
-        Ok(Self { _smtc, _player })
+        Ok(Self { _smtc, _player, control_events: Mutex::new(None) })
     }
 
     fn _update_state(&self, state: SMTCState) -> Result<(), windows::core::Error> {

@@ -10,9 +10,15 @@ class AlbumsPage extends StatelessWidget {
   const AlbumsPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+        valueListenable: AudioLibrary.revision,
+        builder: (context, _, __) => _buildContent(context),
+      );
+
+  Widget _buildContent(BuildContext context) {
     final contentList = AudioLibrary.instance.albumCollection.values.toList();
     return UniPage<Album>(
+      useMediaCards: true,
       pref: AppPreference.instance.albumsPagePref,
       title: "专辑",
       subtitle: "${contentList.length} 张专辑",

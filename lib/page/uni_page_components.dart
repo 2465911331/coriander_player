@@ -19,7 +19,7 @@ class ShufflePlay<T> extends StatelessWidget {
       icon: const Icon(Symbols.shuffle),
       label: const Text("随机播放"),
       style: const ButtonStyle(
-        fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
+        minimumSize: WidgetStatePropertyAll(Size(0, 40)),
       ),
     );
   }
@@ -55,6 +55,9 @@ class SortMethodComboBox<T> extends StatelessWidget {
             padding: WidgetStatePropertyAll(EdgeInsets.all(12)),
           ),
           leadingIcon: Icon(sortMethods[i].icon),
+          trailingIcon: sortMethods[i] == currSortMethod
+              ? const Icon(Icons.check_rounded)
+              : null,
           child: Text(sortMethods[i].name),
           onPressed: () => setSortMethod(sortMethods[i]),
         ),
@@ -62,8 +65,8 @@ class SortMethodComboBox<T> extends StatelessWidget {
       builder: (context, menuController, _) {
         final borderRadius = BorderRadius.circular(20.0);
 
-        return SizedBox(
-          height: 40.0,
+        return ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
           child: Material(
             borderRadius: borderRadius,
             color: scheme.secondaryContainer,
@@ -78,7 +81,7 @@ class SortMethodComboBox<T> extends StatelessWidget {
                 }
               },
               child: Padding(
-                padding: const EdgeInsets.only(left: 16.0, right: 12.0),
+                padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -136,14 +139,30 @@ class ContentViewSwitch<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    var isListView = contentView == ContentView.list;
-    return IconButton.filledTonal(
-      tooltip: "切换页面视图；现在：${isListView ? "列表" : "表格"}",
-      onPressed: () => setContentView(
-        isListView ? ContentView.table : ContentView.list,
-      ),
-      icon: Icon(isListView ? Symbols.list : Symbols.table),
-    );
+    if (MediaQuery.sizeOf(context).width <= 640) {
+      return IconButton.filledTonal(
+          tooltip: '视图：${contentView == ContentView.list ? '列表' : '卡片'}',
+          onPressed: () => setContentView(contentView == ContentView.list
+              ? ContentView.table
+              : ContentView.list),
+          icon: Icon(contentView == ContentView.list
+              ? Symbols.list
+              : Symbols.grid_view));
+    }
+    return SegmentedButton<ContentView>(
+        showSelectedIcon: false,
+        segments: const [
+          ButtonSegment(
+              value: ContentView.list,
+              icon: Icon(Symbols.list),
+              label: Text('列表')),
+          ButtonSegment(
+              value: ContentView.table,
+              icon: Icon(Symbols.grid_view),
+              label: Text('卡片'))
+        ],
+        selected: {contentView},
+        onSelectionChanged: (values) => setContentView(values.first));
   }
 }
 
@@ -168,17 +187,21 @@ class AddAllToPlaylist extends StatelessWidget {
               EdgeInsets.symmetric(horizontal: 20),
             ),
           ),
-          onPressed: () {
-            for (var item in multiSelectController.selected) {
-              if (!PLAYLISTS[i].audios.containsKey(item.path)) {
-                PLAYLISTS[i].audios[item.path] = item;
-              }
-            }
-            showTextOnSnackBar(
-              "成功将${multiSelectController.selected.length}首添加到歌单“${PLAYLISTS[i].name}”",
-            );
-          },
-          child: Text(PLAYLISTS[i].name),
+          onPressed: PLAYLISTS[i].isSmart
+              ? null
+              : () {
+                  for (var item in multiSelectController.selected) {
+                    if (!PLAYLISTS[i].audios.containsKey(item.path)) {
+                      PLAYLISTS[i].audios[item.path] = item;
+                      schedulePlaylistSave();
+                    }
+                  }
+                  showTextOnSnackBar(
+                    "成功将${multiSelectController.selected.length}首添加到歌单“${PLAYLISTS[i].name}”",
+                  );
+                },
+          child: Text(
+              '${PLAYLISTS[i].name}${PLAYLISTS[i].isSmart ? '（自动匹配）' : ''}'),
         ),
       ),
       builder: (context, controller, _) => FilledButton.icon(
@@ -192,7 +215,7 @@ class AddAllToPlaylist extends StatelessWidget {
         icon: const Icon(Symbols.add),
         label: const Text("添加到歌单"),
         style: const ButtonStyle(
-          fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
+          minimumSize: WidgetStatePropertyAll(Size(0, 40)),
         ),
       ),
     );

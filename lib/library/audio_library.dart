@@ -1,10 +1,12 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:collection';
 import 'dart:ui';
 import 'package:coriander_player/app_settings.dart';
 import 'package:coriander_player/src/rust/api/tag_reader.dart';
 import 'package:coriander_player/utils.dart';
 import 'package:flutter/painting.dart';
+import 'package:flutter/foundation.dart';
 
 /// from index.json
 class AudioLibrary {
@@ -21,11 +23,12 @@ class AudioLibrary {
 
   /// must call [initFromIndex]
   static AudioLibrary get instance {
-    _instance ?? AudioLibrary._([]);
+    _instance ??= AudioLibrary._([]);
     return _instance!;
   }
 
   static AudioLibrary? _instance;
+  static final revision = ValueNotifier<int>(0);
 
   /// 目前 index 结构：
   /// ```json
@@ -43,9 +46,10 @@ class AudioLibrary {
   ///     "version": 110
   /// }
   /// ```
-  static Future<void> initFromIndex() async {
+  static Future<void> initFromIndex(
+      {bool throwOnError = false, String? dataDirectory}) async {
     try {
-      final supportPath = (await getAppDataDir()).path;
+      final supportPath = dataDirectory ?? (await getAppDataDir()).path;
       final indexPath = "$supportPath\\index.json";
 
       final indexStr = File(indexPath).readAsStringSync();
@@ -62,13 +66,13 @@ class AudioLibrary {
         folders.add(AudioFolder.fromMap(folderMap, audios));
       }
 
-      _instance = AudioLibrary._(folders);
-
-      instance.artistCollection.clear();
-      instance.albumCollection.clear();
-      instance._buildCollections();
+      final updated = AudioLibrary._(folders);
+      updated._buildCollections();
+      _instance = updated;
+      revision.value++;
     } catch (err, trace) {
       LOGGER.e(err, stackTrace: trace);
+      if (throwOnError) rethrow;
     }
   }
 
@@ -192,7 +196,10 @@ class Audio {
   /// 标签来源（Lofty、Windows、null）
   String? by;
 
-  ImageProvider? _cover;
+  Future<ImageProvider?>? _coverFuture;
+  // Keep recently viewed card covers without retaining large images for every
+  // song ever scrolled past. Widgets and Flutter's image cache retain active art.
+  static final _mediumCovers = LinkedHashMap<Audio, Future<ImageProvider?>>();
 
   /// 以“、”和“/”分割艺术家，会把名称中带有这些符号的艺术家分割。
   /// 暂时想不到别的方法。
@@ -261,22 +268,19 @@ class Audio {
   /// 缓存bytes时，每次加载图片都要重新解码，内存占用很大。快速滚动时能到700mb
   /// 缓存ImageProvider不用重新解码。快速滚动时最多250mb
   /// 48*48
-  Future<ImageProvider?> get cover {
-    if (_cover == null) {
-      return _getResizedPic(width: 48, height: 48).then((value) {
-        if (value == null) return null;
+  Future<ImageProvider?> get cover =>
+      _coverFuture ??= _getResizedPic(width: 48, height: 48);
 
-        _cover = value;
-        return _cover;
-      });
+  /// Bounded by the lifetime of this library entry, including missing artwork.
+  Future<ImageProvider?> get mediumCover {
+    final future =
+        _mediumCovers.remove(this) ?? _getResizedPic(width: 200, height: 200);
+    _mediumCovers[this] = future;
+    if (_mediumCovers.length > 128) {
+      _mediumCovers.remove(_mediumCovers.keys.first);
     }
-    return Future.value(_cover);
+    return future;
   }
-
-  /// audio detail page 不需要频繁调用，所以不缓存图片
-  /// 200 * 200
-  Future<ImageProvider?> get mediumCover =>
-      _getResizedPic(width: 200, height: 200);
 
   /// now playing 不需要频繁调用，所以不缓存图片
   /// size: 400 * devicePixelRatio（屏幕缩放大小）

@@ -1,4 +1,5 @@
 import 'package:coriander_player/app_preference.dart';
+import 'package:coriander_player/component/library_refresh_button.dart';
 import 'package:coriander_player/component/audio_tile.dart';
 import 'package:coriander_player/utils.dart';
 import 'package:coriander_player/library/audio_library.dart';
@@ -12,14 +13,23 @@ class FolderDetailPage extends StatelessWidget {
   const FolderDetailPage({super.key, required this.folder});
 
   @override
-  Widget build(BuildContext context) {
-    final contentList = List<Audio>.from(folder.audios);
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+        valueListenable: AudioLibrary.revision,
+        builder: (context, _, __) => _buildContent(context),
+      );
+
+  Widget _buildContent(BuildContext context) {
+    final matching = AudioLibrary.instance.folders
+        .where((item) => item.path.toLowerCase() == folder.path.toLowerCase());
+    final currentFolder = matching.isEmpty ? folder : matching.first;
+    final contentList = List<Audio>.from(currentFolder.audios);
     final multiSelectController = MultiSelectController<Audio>();
     return UniPage<Audio>(
       pref: AppPreference.instance.folderDetailPagePref,
       title: folder.path,
       subtitle: "${contentList.length} 首乐曲",
       contentList: contentList,
+      primaryAction: const LibraryRefreshButton(),
       contentBuilder: (context, item, i, multiSelectController) => AudioTile(
         audioIndex: i,
         playlist: contentList,

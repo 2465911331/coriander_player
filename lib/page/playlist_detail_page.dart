@@ -22,13 +22,20 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+        valueListenable: AudioLibrary.revision,
+        builder: (context, _, __) => _buildContent(context));
+  }
+
+  Widget _buildContent(BuildContext context) {
     final contentList = widget.playlist.audios.values.toList();
     final scheme = Theme.of(context).colorScheme;
 
     return UniPage<Audio>(
       pref: AppPreference.instance.playlistDetailPagePref,
       title: widget.playlist.name,
-      subtitle: "${contentList.length} 首乐曲",
+      subtitle:
+          "${contentList.length} 首乐曲${widget.playlist.isSmart ? ' · 根据规则自动更新' : ''}",
       contentList: contentList,
       contentBuilder: (context, item, i, multiSelectController) => AudioTile(
         audioIndex: i,
@@ -41,22 +48,24 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
       enableContentViewSwitch: true,
       multiSelectController: multiSelectController,
       multiSelectViewActions: [
-        IconButton.filled(
-          tooltip: "移除选中歌曲",
-          onPressed: () {
-            setState(() {
-              for (var item in multiSelectController.selected) {
-                widget.playlist.audios.remove(item.path);
-              }
-            });
-            multiSelectController.useMultiSelectView(false);
-          },
-          style: ButtonStyle(
-            backgroundColor: WidgetStatePropertyAll(scheme.error),
-            foregroundColor: WidgetStatePropertyAll(scheme.onError),
+        if (!widget.playlist.isSmart)
+          IconButton.filled(
+            tooltip: "移除选中歌曲",
+            onPressed: () {
+              setState(() {
+                for (var item in multiSelectController.selected) {
+                  widget.playlist.audios.remove(item.path);
+                }
+              });
+              schedulePlaylistSave();
+              multiSelectController.useMultiSelectView(false);
+            },
+            style: ButtonStyle(
+              backgroundColor: WidgetStatePropertyAll(scheme.error),
+              foregroundColor: WidgetStatePropertyAll(scheme.onError),
+            ),
+            icon: const Icon(Symbols.delete),
           ),
-          icon: const Icon(Symbols.delete),
-        ),
         MultiSelectSelectOrClearAll(
           multiSelectController: multiSelectController,
           contentList: contentList,

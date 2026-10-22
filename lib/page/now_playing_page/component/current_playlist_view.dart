@@ -1,115 +1,93 @@
-import 'package:coriander_player/play_service/play_service.dart';
 import 'package:flutter/material.dart';
+import 'package:coriander_player/play_service/play_service.dart';
+import 'package:coriander_player/src/bass/bass_player.dart';
+import 'package:coriander_player/app_design.dart';
+import 'package:coriander_player/component/song_list_item.dart';
+import 'package:coriander_player/component/library_card.dart';
 
 class CurrentPlaylistView extends StatefulWidget {
-  const CurrentPlaylistView({super.key});
-
+  const CurrentPlaylistView({super.key, this.showHeader = true});
+  final bool showHeader;
   @override
   State<CurrentPlaylistView> createState() => _CurrentPlaylistViewState();
 }
 
 class _CurrentPlaylistViewState extends State<CurrentPlaylistView> {
-  final playbackService = PlayService.instance.playbackService;
-  late final ScrollController scrollController;
-
-  void _toNowPlaying() {
-    if (scrollController.hasClients) {
-      scrollController.animateTo(
-        playbackService.playlistIndex * 56.0,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.fastOutSlowIn,
-      );
-    }
+  final playback = PlayService.instance.playbackService;
+  final controller = ScrollController();
+  void reveal() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !controller.hasClients) return;
+      final offset = (playback.playlistIndex * AppDesign.songExtent(context))
+          .clamp(0.0, controller.position.maxScrollExtent);
+      if (AppMotion.enabled(context)) {
+        controller.animateTo(offset,
+            duration: AppMotion.page, curve: AppMotion.curve);
+      } else {
+        controller.jumpTo(offset);
+      }
+    });
   }
 
   @override
   void initState() {
     super.initState();
-    scrollController = ScrollController(
-      initialScrollOffset: playbackService.playlistIndex * 56.0,
-    );
-    playbackService.addListener(_toNowPlaying);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Material(
-      type: MaterialType.transparency,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text(
-              "播放列表",
-              style: TextStyle(
-                color: scheme.onSecondaryContainer,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          Expanded(
-            child: ListenableBuilder(
-              listenable: playbackService.shuffle,
-              builder: (context, _) {
-                return ListView.builder(
-                  controller: scrollController,
-                  itemCount: playbackService.playlist.value.length,
-                  itemExtent: 56.0,
-                  itemBuilder: (context, index) {
-                    return _PlaylistViewItem(index: index);
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
+    playback.addListener(reveal);
+    reveal();
   }
 
   @override
   void dispose() {
+    playback.removeListener(reveal);
+    controller.dispose();
     super.dispose();
-    playbackService.removeListener(_toNowPlaying);
-    scrollController.dispose();
   }
-}
-
-class _PlaylistViewItem extends StatelessWidget {
-  const _PlaylistViewItem({required this.index});
-
-  final int index;
 
   @override
-  Widget build(BuildContext context) {
-    var playbackService = PlayService.instance.playbackService;
-    final item = playbackService.playlist.value[index];
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(8.0),
-      onTap: () {
-        playbackService.playIndexOfPlaylist(index);
-      },
-      child: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: DefaultTextStyle(
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: scheme.onSecondaryContainer, fontSize: 14),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(item.title),
-              Text("${item.artist} - ${item.album}"),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Material(
+      type: MaterialType.transparency,
+      child: ListenableBuilder(
+          listenable: Listenable.merge([playback, playback.playlist]),
+          builder: (context, _) => StreamBuilder<PlayerState>(
+              stream: playback.playerStateStream,
+              initialData: playback.playerState,
+              builder: (context, snapshot) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (widget.showHeader)
+                          Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Text(
+                                  '播放队列 · ${playback.playlist.value.length}',
+                                  style:
+                                      Theme.of(context).textTheme.titleLarge)),
+                        Expanded(
+                            child: playback.playlist.value.isEmpty
+                                ? const Center(child: Text('队列还是空的，先选择一首歌曲'))
+                                : ListView.builder(
+                                    key: const PageStorageKey('playback-queue'),
+                                    controller: controller,
+                                    padding: const EdgeInsets.all(8),
+                                    itemExtent: AppDesign.songExtent(context),
+                                    itemCount: playback.playlist.value.length,
+                                    itemBuilder: (context, index) {
+                                      final audio =
+                                          playback.playlist.value[index];
+                                      final current =
+                                          playback.playlistIndex == index;
+                                      return SongListItem(
+                                          title: audio.title,
+                                          subtitle: audio.artist,
+                                          artwork: LibraryArtwork(
+                                              identity: audio,
+                                              seed: audio.album,
+                                              load: () => audio.cover),
+                                          current: current,
+                                          playing: current &&
+                                              snapshot.data ==
+                                                  PlayerState.playing,
+                                          onTap: () => playback
+                                              .playIndexOfPlaylist(index));
+                                    })),
+                      ]))));
 }

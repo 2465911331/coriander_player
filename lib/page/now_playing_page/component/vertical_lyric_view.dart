@@ -1,3 +1,5 @@
+import 'package:coriander_player/appearance.dart';
+import 'package:coriander_player/component/lyric_visuals.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -21,6 +23,12 @@ class VerticalLyricView extends StatefulWidget {
 class _VerticalLyricViewState extends State<VerticalLyricView> {
   bool isHovering = false;
   final lyricViewController = LyricViewController();
+
+  @override
+  void dispose() {
+    lyricViewController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,7 +83,9 @@ class _VerticalLyricViewState extends State<VerticalLyricView> {
                         ConnectionState.active => loadingWidget,
                         ConnectionState.done => lyricNullable == null
                             ? noLyricWidget
-                            : _VerticalLyricScrollView(lyric: lyricNullable),
+                            : _VerticalLyricScrollView(
+                                key: ValueKey(lyricNullable),
+                                lyric: lyricNullable),
                       },
                       if (isHovering || ALWAYS_SHOW_LYRIC_VIEW_CONTROLS)
                         const Align(
@@ -94,10 +104,8 @@ class _VerticalLyricViewState extends State<VerticalLyricView> {
   }
 }
 
-final LYRIC_VIEW_KEY = GlobalKey();
-
 class _VerticalLyricScrollView extends StatefulWidget {
-  const _VerticalLyricScrollView({required this.lyric});
+  const _VerticalLyricScrollView({super.key, required this.lyric});
 
   final Lyric lyric;
 
@@ -117,7 +125,14 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView> {
   ];
 
   /// 用来定位到当前歌词
-  final currentLyricTileKey = GlobalKey();
+  // Keys belong to individual lines. Moving a single key between lines would
+  // move the active line's animation state too, skipping its fade/scale change.
+  late final _lineKeys =
+      List.generate(widget.lyric.lines.length, (_) => GlobalKey());
+  final _emptyKey = GlobalKey();
+  int _mainLine = 0;
+  GlobalKey get currentLyricTileKey =>
+      _lineKeys.isEmpty ? _emptyKey : _lineKeys[_mainLine];
 
   @override
   void initState() {
@@ -146,7 +161,11 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView> {
         Scrollable.ensureVisible(
           targetContext,
           alignment: 0.25,
-          duration: const Duration(milliseconds: 300),
+          duration: Duration(
+              milliseconds:
+                  allowVisualMotion(context, AppearanceScope.of(context))
+                      ? 350
+                      : 0),
           curve: Curves.fastOutSlowIn,
         );
       }
@@ -163,6 +182,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView> {
   /// 当前歌词行100%不透明度，其他歌词行18%透明度
   /// 把[currentLyricTileKey]绑在当前歌词行上
   List<LyricViewTile> _generateLyricTiles(int mainLine) {
+    _mainLine = widget.lyric.lines.isEmpty
+        ? 0
+        : mainLine.clamp(0, widget.lyric.lines.length - 1);
     return List.generate(
       widget.lyric.lines.length,
       (i) {
@@ -172,7 +194,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView> {
           opacity = 0.18;
         }
         return LyricViewTile(
-          key: i == mainLine ? currentLyricTileKey : null,
+          key: _lineKeys[i],
           line: widget.lyric.lines[i],
           opacity: opacity,
           onTap: () => _seekToLyricLine(i),
@@ -182,6 +204,10 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView> {
   }
 
   void _updateNextLyricLine(int lyricLine) {
+    if (!mounted ||
+        !identical(widget.lyric, lyricService.currentLyric) ||
+        lyricLine < 0 ||
+        lyricLine >= widget.lyric.lines.length) return;
     lyricTiles = _generateLyricTiles(lyricLine);
     setState(() {});
 
@@ -194,7 +220,11 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView> {
         Scrollable.ensureVisible(
           targetContext,
           alignment: 0.25,
-          duration: const Duration(milliseconds: 300),
+          duration: Duration(
+              milliseconds:
+                  allowVisualMotion(context, AppearanceScope.of(context))
+                      ? 350
+                      : 0),
           curve: Curves.fastOutSlowIn,
         );
       }
@@ -203,26 +233,27 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView> {
 
   @override
   Widget build(BuildContext context) {
-    return CustomScrollView(
-      key: LYRIC_VIEW_KEY,
-      controller: scrollController,
-      slivers: [
-        const SliverFillRemaining(),
-        SliverToBoxAdapter(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: lyricTiles,
-          ),
-        ),
-        const SliverFillRemaining(),
-      ],
-    );
+    return LyricEdgeFade(
+        enabled: AppearanceScope.of(context).lyricEdgeFade,
+        child: CustomScrollView(
+          controller: scrollController,
+          slivers: [
+            const SliverFillRemaining(),
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: lyricTiles,
+              ),
+            ),
+            const SliverFillRemaining(),
+          ],
+        ));
   }
 
   @override
   void dispose() {
-    super.dispose();
     lyricLineStreamSubscription.cancel();
     scrollController.dispose();
+    super.dispose();
   }
 }

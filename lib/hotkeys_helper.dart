@@ -1,10 +1,20 @@
 import 'package:coriander_player/play_service/play_service.dart';
 import 'package:coriander_player/src/bass/bass_player.dart';
-import 'package:coriander_player/utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
-import 'package:go_router/go_router.dart';
+
+/// Let focused dialogs and panels handle Escape before page navigation.
+class PlayerEscapeShortcut extends StatelessWidget {
+  const PlayerEscapeShortcut(
+      {super.key, required this.onEscape, required this.child});
+  final VoidCallback onEscape;
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => CallbackShortcuts(bindings: {
+        const SingleActivator(LogicalKeyboardKey.escape): onEscape,
+      }, child: Focus(autofocus: true, child: child));
+}
 
 class HotkeysHelper {
   static final Map<HotKey, void Function(HotKey)> _hotKeys = {
@@ -17,18 +27,6 @@ class HotkeysHelper {
         playbackService.playAgain();
       } else {
         playbackService.start();
-      }
-    },
-    HotKey(key: PhysicalKeyboardKey.escape, scope: HotKeyScope.inapp): (_) {
-      final routerContext = ROUTER_KEY.currentContext;
-      if (routerContext == null) return;
-
-      // 先关闭弹窗，再返回上一级页面
-      final navigator = Navigator.maybeOf(routerContext);
-      if (navigator?.canPop() == true) {
-        navigator?.pop();
-      } else if (ROUTER_KEY.currentContext?.canPop() == true) {
-        ROUTER_KEY.currentContext?.pop();
       }
     },
     HotKey(
@@ -49,6 +47,8 @@ class HotkeysHelper {
 
   static void registerHotKeys() {
     for (var item in _hotKeys.entries) {
+      if (hotKeyManager.registeredHotKeyList
+          .any((key) => key.identifier == item.key.identifier)) continue;
       hotKeyManager.register(
         item.key,
         keyDownHandler: item.value,
@@ -58,11 +58,14 @@ class HotkeysHelper {
 
   static Future<void> unregisterAll() => hotKeyManager.unregisterAll();
 
-  static Future<void> onFocusChanges(focus) async {
-    if (focus) {
+  static bool _editing = false;
+  static Future<void> _focusUpdate = Future.value();
+  static Future<void> onFocusChanges(bool focus) {
+    _editing = focus;
+    _focusUpdate = _focusUpdate.then((_) async {
       await unregisterAll();
-    } else {
-      registerHotKeys();
-    }
+      if (!_editing) registerHotKeys();
+    });
+    return _focusUpdate;
   }
 }

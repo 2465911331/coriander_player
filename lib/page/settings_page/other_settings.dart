@@ -2,11 +2,67 @@ import 'package:coriander_player/app_settings.dart';
 import 'package:coriander_player/component/build_index_state_view.dart';
 import 'package:coriander_player/component/settings_tile.dart';
 import 'package:coriander_player/library/audio_library.dart';
-import 'package:coriander_player/library/playlist.dart';
-import 'package:coriander_player/lyric/lyric_source.dart';
+import 'package:coriander_player/play_service/play_service.dart';
+import 'package:coriander_player/play_service/playback_session.dart';
+import 'package:coriander_player/window_behavior.dart';
 import 'package:filepicker_windows/filepicker_windows.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
+
+class PlaybackAndWindowSettings extends StatefulWidget {
+  const PlaybackAndWindowSettings({super.key});
+
+  @override
+  State<PlaybackAndWindowSettings> createState() =>
+      _PlaybackAndWindowSettingsState();
+}
+
+class _PlaybackAndWindowSettingsState extends State<PlaybackAndWindowSettings> {
+  final settings = AppSettings.instance;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('记住上次播放'),
+            subtitle: const Text('恢复歌曲、队列和进度，启动后保持暂停'),
+            value: settings.rememberPlayback,
+            onChanged: (value) async {
+              setState(() => settings.rememberPlayback = value);
+              await settings.saveSettings();
+              if (value) {
+                await PlayService.savePlaybackIfInitialized();
+              } else {
+                await PlaybackSessionStore(
+                  () async => (await getAppDataDir()).path,
+                ).clear();
+              }
+            },
+          ),
+          const SizedBox(height: 16),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('关闭主窗口时'),
+            subtitle: const Text('托盘菜单中的“退出”始终退出程序'),
+            trailing: DropdownButton<CloseBehavior>(
+              value: settings.closeBehavior,
+              items: CloseBehavior.values
+                  .map((behavior) => DropdownMenuItem(
+                        value: behavior,
+                        child: Text(behavior.label),
+                      ))
+                  .toList(),
+              onChanged: (behavior) async {
+                if (behavior == null) return;
+                setState(() => settings.closeBehavior = behavior);
+                await settings.saveSettings();
+              },
+            ),
+          ),
+        ],
+      );
+}
 
 class DefaultLyricSourceControl extends StatefulWidget {
   const DefaultLyricSourceControl({super.key});
@@ -155,8 +211,6 @@ class _AudioLibraryEditorDialogState extends State<AudioLibraryEditorDialog> {
                                 whenIndexBuilt: () async {
                                   await Future.wait([
                                     AudioLibrary.initFromIndex(),
-                                    readPlaylists(),
-                                    readLyricSources(),
                                   ]);
                                   if (context.mounted) {
                                     Navigator.pop(context);

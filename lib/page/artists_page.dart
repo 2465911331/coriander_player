@@ -10,9 +10,15 @@ class ArtistsPage extends StatelessWidget {
   const ArtistsPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+        valueListenable: AudioLibrary.revision,
+        builder: (context, _, __) => _buildContent(context),
+      );
+
+  Widget _buildContent(BuildContext context) {
     final contentList = AudioLibrary.instance.artistCollection.values.toList();
     return UniPage<Artist>(
+      useMediaCards: true,
       pref: AppPreference.instance.artistsPagePref,
       title: "艺术家",
       subtitle: "${contentList.length} 位艺术家",

@@ -136,6 +136,7 @@ class _SetLyricSourceDialog extends StatelessWidget {
                 onTap: () {
                   LYRIC_SOURCES[audio.path] =
                       LyricSource(LyricSourceType.local);
+                  scheduleLyricSourceSave();
                   PlayService.instance.lyricService.useLocalLyric();
                   Navigator.pop(context);
                 },
@@ -242,6 +243,7 @@ class _LyricSourceTileState extends State<_LyricSourceTile> {
           kugouSongHash: searchResult.kugouSongHash,
           neteaseSongId: searchResult.neteaseSongId,
         );
+        scheduleLyricSourceSave();
         PlayService.instance.lyricService.useSpecificLyric(lyric);
 
         Navigator.pop(context);

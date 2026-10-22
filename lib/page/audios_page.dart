@@ -12,10 +12,16 @@ class AudiosPage extends StatelessWidget {
   const AudiosPage({super.key, this.locateTo});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+        valueListenable: AudioLibrary.revision,
+        builder: (context, _, __) => _buildContent(context),
+      );
+
+  Widget _buildContent(BuildContext context) {
     final contentList = List<Audio>.from(AudioLibrary.instance.audioCollection);
     final multiSelectController = MultiSelectController<Audio>();
     return UniPage<Audio>(
+      useMediaCards: true,
       pref: AppPreference.instance.audiosPagePref,
       title: "音乐",
       subtitle: "${contentList.length} 首乐曲",

@@ -18,18 +18,39 @@ class _NowPlayingPage_Large extends StatelessWidget {
                   child: ValueListenableBuilder(
                     valueListenable: NOW_PLAYING_VIEW_MODE,
                     builder: (context, value, _) => AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 150),
+                      duration: AppMotion.duration(context),
                       child: switch (value) {
                         NowPlayingViewMode.onlyMain =>
                           const VerticalLyricView(),
                         NowPlayingViewMode.withLyric =>
                           const VerticalLyricView(),
                         NowPlayingViewMode.withPlaylist =>
-                          const CurrentPlaylistView(),
+                          MediaQuery.sizeOf(context).width >= 1280
+                              ? const VerticalLyricView()
+                              : const CurrentPlaylistView(),
                       },
                     ),
                   ),
                 ),
+                ValueListenableBuilder(
+                    valueListenable: NOW_PLAYING_VIEW_MODE,
+                    builder: (context, value, _) => AnimatedSize(
+                        duration: AppMotion.duration(context),
+                        curve: AppMotion.curve,
+                        child: value == NowPlayingViewMode.withPlaylist &&
+                                MediaQuery.sizeOf(context).width >= 1280
+                            ? Padding(
+                                padding: const EdgeInsets.only(left: 16),
+                                child: SizedBox(
+                                    width: 280,
+                                    child: PlaybackQueuePanel(onClose: () {
+                                      NOW_PLAYING_VIEW_MODE.value =
+                                          NowPlayingViewMode.withLyric;
+                                      AppPreference.instance.nowPlayingPagePref
+                                              .nowPlayingViewMode =
+                                          NowPlayingViewMode.withLyric;
+                                    })))
+                            : const SizedBox.shrink())),
               ],
             ),
           ),

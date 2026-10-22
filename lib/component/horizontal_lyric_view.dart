@@ -16,7 +16,7 @@ class HorizontalLyricView extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: scheme.secondaryContainer,
+        color: scheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(16.0),
       ),
       child: ListenableBuilder(
@@ -31,7 +31,7 @@ class HorizontalLyricView extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: Text(
                     "Enjoy Music",
-                    style: TextStyle(color: scheme.onSecondaryContainer),
+                    style: TextStyle(color: scheme.onSurfaceVariant),
                   ),
                 ),
               );
@@ -80,7 +80,9 @@ class _LyricHorizontalScrollAreaState
     }
 
     lyricLineStreamSubscription = lyricService.lyricLineStream.listen((line) {
-      if (widget.lyric.lines.isEmpty) return;
+      if (!identical(widget.lyric, lyricService.currentLyric) ||
+          line < 0 ||
+          line >= widget.lyric.lines.length) return;
       final currLine = widget.lyric.lines[line];
 
       setState(() {
@@ -135,7 +137,7 @@ class _LyricHorizontalScrollAreaState
           alignment: Alignment.centerLeft,
           child: Text(
             currContent,
-            style: TextStyle(color: scheme.onSecondaryContainer),
+            style: TextStyle(color: scheme.onSurfaceVariant),
           ),
         ),
       ),
